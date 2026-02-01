@@ -1,0 +1,86 @@
+{
+    "name": "mail2ai",
+    "version": "2.0.0",
+    "description": "Mail to our own personal AI assistant. Any OS. Any Platform, Any AI Models. ",
+    "type": "module",
+    "main": "dist/src/index.js",
+    "types": "dist/src/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/src/index.d.ts",
+            "import": "./dist/src/index.js"
+        }
+    },
+    "files": [
+        "dist/src",
+        "README.md"
+    ],
+    "bin": {
+        "mail2ai": "./bin/mail2ai.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsx watch src/index.ts",
+        "start": "node dist/src/index.js",
+        "test": "vitest",
+        "test:run": "vitest run",
+        "test:integration": "tsx tests/integration.test.ts",
+        "lint": "eslint src --ext .ts",
+        "cli": "tsx bin/mail2ai.ts",
+        "example": "tsx examples/with-mock-agent.ts",
+        "example:library": "npm run build && node dist/examples/as-library.js"
+    },
+    "keywords": [
+        "email",
+        "ai",
+        "agent",
+        "automation",
+        "task-management",
+        "copilot",
+        "openai",
+        "claude"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "chalk": "^5.3.0",
+        "commander": "^14.0.3",
+        "dotenv": "^17.2.3",
+        "imapflow": "^1.2.8",
+        "mailparser": "^3.9.3",
+        "node-cron": "^4.2.1",
+        "nodemailer": "^7.0.13",
+        "ora": "^9.1.0",
+        "proper-lockfile": "^4.1.2",
+        "uuid": "^13.0.0",
+        "zod": "^4.3.6"
+    },
+    "optionalDependencies": {
+        "@github/copilot-sdk": "^0.1.20"
+    },
+    "devDependencies": {
+        "@types/mailparser": "^3.4.6",
+        "@types/node": "^25.1.0",
+        "@types/node-cron": "^3.0.11",
+        "@types/nodemailer": "^7.0.9",
+        "@types/proper-lockfile": "^4.1.4",
+        "@types/uuid": "^10.0.0",
+        "@typescript-eslint/eslint-plugin": "^8.54.0",
+        "@typescript-eslint/parser": "^8.54.0",
+        "eslint": "^9.39.2",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.18"
+    },
+    "peerDependencies": {
+        "@github/copilot-sdk": ">=0.1.0"
+    },
+    "peerDependenciesMeta": {
+        "@github/copilot-sdk": {
+            "optional": true
+        }
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}
