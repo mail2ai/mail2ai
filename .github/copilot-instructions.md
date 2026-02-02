@@ -9,7 +9,8 @@
 
 ## Critical workflows
 
-- NEVER write ANY comments in code.
+- NEVER write ANY comments in code, code is self-explanatory.
+- ALWAYS handle errors gracefully; log errors and update task status to 'failed' when appropriate.
 - All markdowns, documents, comments, codes, and others MUST be in English.
 - Build: `npm run build` (tsc) output goes to dist/ (ESM, type module). See [package.json](package.json).
 - Dev: `npm run dev` (tsx watch). Examples: `npm run example`, `npm run example:library`. See [package.json](package.json) and [examples/](examples/).

@@ -287,7 +287,7 @@ export function createScheduler(
     return new Scheduler(taskQueue, agent, emailService, {
         pollInterval: parseInt(process.env.SCHEDULER_POLL_INTERVAL || '5000', 10),
         maxConcurrent: parseInt(process.env.SCHEDULER_MAX_CONCURRENT || '1', 10),
-        taskTimeout: parseInt(process.env.SCHEDULER_TASK_TIMEOUT || '300000', 10),
+        taskTimeout: parseInt(process.env.SCHEDULER_TASK_TIMEOUT || '600000', 10),
         enabled: process.env.SCHEDULER_ENABLED !== 'false'
     });
 }

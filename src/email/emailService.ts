@@ -21,7 +21,6 @@ interface EmailServiceConfig {
         pass: string;
     };
     from?: string;
-    templatePath?: string;
 }
 
 // Email send options
@@ -43,7 +42,6 @@ interface SendMailOptions {
 export class EmailService {
     private transporter: nodemailer.Transporter;
     private config: EmailServiceConfig;
-    private templateCache: Map<string, string> = new Map();
 
     constructor(config: EmailServiceConfig) {
         this.config = config;
@@ -87,37 +85,6 @@ export class EmailService {
             logger.error('Failed to send email', error);
             throw error;
         }
-    }
-
-    /**
-     * Render a simple template (no external template engine).
-     */
-    private renderTemplate(template: string, data: Record<string, unknown>): string {
-        let result = template;
-        
-        // Simple variable replacement: {{variable}}
-        for (const [key, value] of Object.entries(data)) {
-            const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-            result = result.replace(regex, String(value ?? ''));
-        }
-
-        // Handle conditional blocks: {{#if condition}}...{{/if}}
-        result = result.replace(
-            /\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-            (_, condition, content) => {
-                return data[condition] ? content : '';
-            }
-        );
-
-        // Handle negated blocks: {{#unless condition}}...{{/unless}}
-        result = result.replace(
-            /\{\{#unless\s+(\w+)\}\}([\s\S]*?)\{\{\/unless\}\}/g,
-            (_, condition, content) => {
-                return !data[condition] ? content : '';
-            }
-        );
-
-        return result;
     }
 
     /**

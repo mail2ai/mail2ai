@@ -39,14 +39,9 @@ export class EmailMonitor {
     private taskQueue: TaskQueue;
     private cronJob: cron.ScheduledTask | null = null;
     private isRunning: boolean = false;
-    private client: ImapFlow | null = null;
 
     constructor(config: EmailMonitorConfig, taskQueue: TaskQueue) {
-        this.config = {
-            ...config,
-            mailbox: config.mailbox || 'INBOX',
-            checkInterval: config.checkInterval || '*/5 * * * *' // default: every 5 minutes
-        };
+        this.config = config;
         this.taskQueue = taskQueue;
     }
 
