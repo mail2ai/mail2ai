@@ -30,3 +30,5 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+projects/*

@@ -3,6 +3,20 @@ export interface AnalysisInput {
     moduleDescription: string;
     entryFiles?: string[];
     outputLibName?: string;
+    /** Directories to search for files (relative to project). If provided, only files in these directories are analyzed. */
+    directories?: string[];
+}
+
+/** Configuration for the Analysis Agent */
+export interface AgentConfig {
+    /** AI model to use (default: gpt-5-mini) */
+    model?: string;
+    /** Maximum tokens for AI responses */
+    maxTokens?: number;
+    /** Temperature for AI responses (0-1) */
+    temperature?: number;
+    /** Enable verbose logging */
+    verbose?: boolean;
 }
 
 export interface DependencyInfo {

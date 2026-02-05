@@ -1,8 +1,10 @@
 /**
  * Analysis Agent for extracting TypeScript modules into independent libraries.
  * 
- * This agent uses ts-morph for code analysis and can integrate with
+ * This agent uses ts-morph for code analysis and integrates with
  * @github/copilot-sdk for AI-assisted decision making.
+ * 
+ * Default model: gpt-5-mini
  */
 
 import * as path from 'path';
@@ -13,6 +15,12 @@ import type {
     MigrationResult,
     SkillContext
 } from './types.js';
+import { AnalysisAgent, type AgentConfig } from './agent.js';
+import { Logger, LogLevel } from './logger.js';
+
+// Re-export the agent and logger
+export { AnalysisAgent, Logger, LogLevel };
+export type { AgentConfig };
 
 // Dynamic imports for skills to handle .ts/.js resolution
 const loadSkills = async () => ({
@@ -59,65 +67,18 @@ export interface Tool {
  * 3. Refactor import paths
  * 4. Generate package.json
  * 5. Build and validate
+ * 
+ * Uses @github/copilot-sdk with gpt-5-mini by default for intelligent orchestration.
  */
-export async function runAnalysisAgent(input: AnalysisInput): Promise<MigrationResult> {
-    const skills = await loadSkills();
-    const libsDir = path.resolve(input.projectPath, '..', 'libs');
-    const libName = input.outputLibName || `extracted-${Date.now()}`;
-    const outputPath = path.join(libsDir, libName);
-
-    const context: SkillContext = {
-        projectPath: input.projectPath,
-        moduleDescription: input.moduleDescription
+export async function runAnalysisAgent(input: AnalysisInput, config?: AgentConfig): Promise<MigrationResult> {
+    const agentConfig: AgentConfig = {
+        model: 'gpt-5-mini',
+        verbose: true,
+        ...config
     };
 
-    try {
-        // Ensure libs directory exists
-        await fs.promises.mkdir(libsDir, { recursive: true });
-
-        console.log('🔍 Step 1: Analyzing project dependencies...');
-        const analysisResult = await skills.analyzeProjectDependencies(input);
-        context.analysisResult = analysisResult;
-
-        console.log(`   Found ${analysisResult.entryPoints.length} entry points`);
-        console.log(`   Found ${analysisResult.internalDependencies.length} internal files`);
-        console.log(`   Found ${analysisResult.externalDependencies.length} external dependencies`);
-
-        console.log('\n📦 Step 2: Migrating code files...');
-        const migrationProgress = await skills.extractAndMigrateCode(analysisResult, outputPath);
-        console.log(`   Copied ${migrationProgress.copiedFiles.length} files`);
-
-        console.log('\n🔧 Step 3: Refactoring import paths...');
-        const refactorResult = await skills.refactorImportPaths(outputPath);
-        console.log(`   Modified ${refactorResult.modifiedFiles.length} files`);
-
-        console.log('\n📄 Step 4: Generating package.json...');
-        const packageResult = await skills.generateLibPackageJson(
-            outputPath,
-            libName,
-            analysisResult.externalDependencies
-        );
-        console.log(`   Created: ${packageResult.packageJsonPath}`);
-
-        console.log('\n🔨 Step 5: Building and validating...');
-        const buildResult = await skills.buildAndValidateLib(outputPath);
-        context.migrationResult = buildResult;
-
-        return buildResult;
-
-    } catch (error) {
-        console.error('\n❌ Error during extraction:', error);
-        return {
-            success: false,
-            libPath: outputPath,
-            migratedFiles: [],
-            errors: [{
-                file: '',
-                error: error instanceof Error ? error.message : String(error),
-                phase: 'analysis'
-            }]
-        };
-    }
+    const agent = new AnalysisAgent(agentConfig);
+    return agent.run(input);
 }
 
 /**

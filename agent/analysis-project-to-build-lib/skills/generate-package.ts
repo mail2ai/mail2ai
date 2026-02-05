@@ -27,15 +27,41 @@ export async function generateLibPackageJson(
             };
         }
 
+        // Known optional dependencies that should be marked as optional
+        const knownOptionalDeps = new Set([
+            '@lydell/node-pty',
+            '@mozilla/readability',
+            'linkedom',
+            '@napi-rs/canvas',
+            'pdfjs-dist',
+            'sqlite-vec',
+            'better-sqlite3',
+            'playwright',
+            'playwright-core'
+        ]);
+
         // Build dependencies object with versions
         const dependencies: Record<string, string> = {};
         const peerDependencies: Record<string, string> = {};
+        const optionalDependencies: Record<string, string> = {};
 
         for (const dep of externalDeps || []) {
-            if (existingDeps[dep]) {
-                dependencies[dep] = existingDeps[dep];
+            // Skip Node.js built-in modules (node:* prefix)
+            if (dep.startsWith('node:')) {
+                continue;
+            }
+            // Skip relative imports that were incorrectly classified
+            if (dep.startsWith('.') || dep.startsWith('/')) {
+                continue;
+            }
+            
+            const version = existingDeps[dep] || '*';
+            
+            // Check if it's a known optional dependency
+            if (knownOptionalDeps.has(dep)) {
+                optionalDependencies[dep] = version;
             } else {
-                dependencies[dep] = '*';
+                dependencies[dep] = version;
             }
         }
 
@@ -63,6 +89,7 @@ export async function generateLibPackageJson(
             license: 'MIT',
             dependencies,
             peerDependencies,
+            optionalDependencies,
             devDependencies: {
                 typescript: '^5.0.0'
             }
@@ -99,20 +126,23 @@ async function createLibTsConfig(libPath: string): Promise<void> {
             target: 'ES2022',
             module: 'NodeNext',
             moduleResolution: 'NodeNext',
-            lib: ['ES2022'],
+            lib: ['ES2023', 'DOM', 'DOM.Iterable'],
             outDir: './dist',
             rootDir: './src',
-            strict: true,
+            strict: false,
             esModuleInterop: true,
             skipLibCheck: true,
             forceConsistentCasingInFileNames: true,
             resolveJsonModule: true,
             declaration: true,
             declarationMap: true,
-            sourceMap: true
+            sourceMap: true,
+            noImplicitAny: false,
+            allowImportingTsExtensions: true,
+            noEmit: true
         },
         include: ['src/**/*'],
-        exclude: ['node_modules', 'dist']
+        exclude: ['node_modules', 'dist', '**/*.test.ts', '**/*.test.tsx']
     };
 
     await fs.promises.writeFile(

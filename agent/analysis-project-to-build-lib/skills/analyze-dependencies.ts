@@ -146,30 +146,108 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string): void 
     fileGraph.set(filePath, dependencies);
 }
 
+/**
+ * Find all TypeScript files in the specified directories.
+ * This provides more precise control over which files to extract.
+ */
+function findFilesInDirectories(
+    project: InstanceType<typeof TsMorphProject>,
+    projectRoot: string,
+    directories: string[]
+): SourceFile[] {
+    const sourceFiles = project.getSourceFiles();
+    const entryPoints: SourceFile[] = [];
+
+    // Normalize directory paths
+    const normalizedDirs = directories.map(dir => {
+        const normalized = dir.replace(/\\/g, '/').toLowerCase();
+        // Remove trailing slash
+        return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+    });
+
+    console.log('  Normalized directories:', normalizedDirs);
+
+    for (const sf of sourceFiles) {
+        if (sf.isInNodeModules()) continue;
+
+        const relativePath = path.relative(projectRoot, sf.getFilePath())
+            .replace(/\\/g, '/')
+            .toLowerCase();
+
+        // Check if file is in any of the specified directories
+        const isInDirectory = normalizedDirs.some(dir => 
+            relativePath.startsWith(dir + '/') || relativePath === dir
+        );
+
+        if (isInDirectory) {
+            entryPoints.push(sf);
+        }
+    }
+
+    console.log(`  Found ${entryPoints.length} files in specified directories`);
+    return entryPoints;
+}
+
 function findEntryPoints(project: InstanceType<typeof TsMorphProject>, projectRoot: string, moduleDescription: string): SourceFile[] {
     const sourceFiles = project.getSourceFiles();
     const entryPoints: SourceFile[] = [];
 
-    // Keywords from module description
-    const keywords = moduleDescription.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+    // Extract path patterns from description (e.g., "src/browser", "assets/chrome-extension")
+    const pathPatterns: string[] = [];
+    
+    // Match path-like patterns in the description
+    const pathRegex = /(?:projects\/\w+\/)?([a-zA-Z0-9_\-\/]+)/g;
+    let match;
+    while ((match = pathRegex.exec(moduleDescription)) !== null) {
+        const potentialPath = match[1];
+        // Only include if it looks like a directory path (has / or common dir names)
+        if (potentialPath.includes('/') || 
+            ['src', 'assets', 'lib', 'browser', 'extension'].some(d => potentialPath.includes(d))) {
+            pathPatterns.push(potentialPath.toLowerCase());
+        }
+    }
+
+    // Keywords from module description (split on spaces, commas, and Chinese punctuation)
+    const keywords = moduleDescription
+        .toLowerCase()
+        .split(/[\s,，、。：:]+/)
+        .filter((w: string) => w.length > 2 && !/^[一-龟]+$/.test(w)) // Filter out pure Chinese
+        .map((w: string) => w.replace(/['"]/g, ''));
+
+    // Add common variations
+    const additionalKeywords = keywords.flatMap(kw => {
+        const parts = kw.split(/[-_\/]/);
+        return parts.length > 1 ? parts : [];
+    });
+    keywords.push(...additionalKeywords);
+
+    console.log('  Path patterns:', pathPatterns);
+    console.log('  Keywords:', keywords.slice(0, 10), keywords.length > 10 ? '...' : '');
 
     for (const sf of sourceFiles) {
         if (sf.isInNodeModules()) continue;
 
         const filePath = sf.getFilePath().toLowerCase();
+        const relativePath = path.relative(projectRoot, sf.getFilePath()).toLowerCase();
         const fileName = path.basename(filePath, path.extname(filePath));
+
+        // Check if file path matches any path pattern
+        const matchesPathPattern = pathPatterns.some(pattern => 
+            relativePath.includes(pattern) || filePath.includes(pattern)
+        );
 
         // Check if file name matches keywords
         const matchesKeyword = keywords.some(kw =>
-            fileName.includes(kw) || filePath.includes(kw)
+            fileName.includes(kw) || relativePath.includes(kw)
         );
 
         // Check if it's an index file in a relevant directory
-        const isRelevantIndex = fileName === 'index' && keywords.some(kw =>
-            path.dirname(filePath).includes(kw)
+        const isRelevantIndex = fileName === 'index' && (
+            pathPatterns.some(pattern => path.dirname(relativePath).includes(pattern)) ||
+            keywords.some(kw => path.dirname(relativePath).includes(kw))
         );
 
-        if (matchesKeyword || isRelevantIndex) {
+        if (matchesPathPattern || matchesKeyword || isRelevantIndex) {
             entryPoints.push(sf);
         }
     }
@@ -191,11 +269,17 @@ export async function analyzeProjectDependencies(input: AnalysisInput): Promise<
     let entrySourceFiles: SourceFile[] = [];
 
     if (input.entryFiles && input.entryFiles.length > 0) {
+        // Use explicitly specified entry files
         for (const entryFile of input.entryFiles) {
             const sf = project.getSourceFile(path.resolve(input.projectPath, entryFile));
             if (sf) entrySourceFiles.push(sf);
         }
+    } else if (input.directories && input.directories.length > 0) {
+        // Use files from specified directories only
+        console.log('  Searching in directories:', input.directories);
+        entrySourceFiles = findFilesInDirectories(project, input.projectPath, input.directories);
     } else {
+        // Fall back to keyword-based search
         entrySourceFiles = findEntryPoints(project, input.projectPath, input.moduleDescription);
     }
 
@@ -212,11 +296,28 @@ export async function analyzeProjectDependencies(input: AnalysisInput): Promise<
     const libName = input.outputLibName || `lib-${Date.now()}`;
     const outputPath = path.resolve(input.projectPath, '..', 'libs', libName);
 
-    const filesToMigrate: FileToMigrate[] = internalDependencies.map(dep => ({
-        sourcePath: dep.filePath,
-        targetPath: path.join(outputPath, 'src', dep.relativePath),
-        pathMappings: []
-    }));
+    const filesToMigrate: FileToMigrate[] = internalDependencies.map(dep => {
+        // Normalize the relative path - if it starts with 'src/', keep it as is
+        // Otherwise, prepend 'src/' to organize the output
+        let targetRelativePath = dep.relativePath;
+        
+        // If the relative path starts with 'src/', we don't add another 'src/' prefix
+        // to avoid nested src/src/ directories
+        if (targetRelativePath.startsWith('src/') || targetRelativePath.startsWith('src\\')) {
+            return {
+                sourcePath: dep.filePath,
+                targetPath: path.join(outputPath, targetRelativePath),
+                pathMappings: []
+            };
+        }
+        
+        // For paths outside of src/, place them under src/
+        return {
+            sourcePath: dep.filePath,
+            targetPath: path.join(outputPath, 'src', targetRelativePath),
+            pathMappings: []
+        };
+    });
 
     const suggestedLibStructure: LibStructure = {
         name: libName,
