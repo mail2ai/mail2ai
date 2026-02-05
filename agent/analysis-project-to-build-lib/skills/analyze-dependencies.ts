@@ -1,6 +1,7 @@
 import type { Project as TsMorphProject, SourceFile } from 'ts-morph';
 import * as path from 'path';
-import type { AnalysisInput, AnalysisResult, DependencyInfo, ImportInfo, ExportInfo, LibStructure, FileToMigrate } from '../types.js';
+import * as fs from 'fs';
+import type { AnalysisInput, AnalysisResult, DependencyInfo, ImportInfo, ExportInfo, LibStructure, FileToMigrate, MissingDependency } from '../types.js';
 
 // Dynamic import for ts-morph
 let Project: typeof TsMorphProject;
@@ -17,6 +18,8 @@ const processedFiles = new Set<string>();
 const internalDependencies: DependencyInfo[] = [];
 const externalDependencies = new Set<string>();
 const fileGraph = new Map<string, string[]>();
+// Track missing dependencies (files referenced but not included due to focus restrictions)
+const missingDependencies = new Map<string, MissingDependency>();
 
 function analyzeSourceFile(sourceFile: SourceFile, projectRoot: string): DependencyInfo {
     const filePath = sourceFile.getFilePath();
@@ -25,7 +28,7 @@ function analyzeSourceFile(sourceFile: SourceFile, projectRoot: string): Depende
     const imports: ImportInfo[] = [];
     const exports: ExportInfo[] = [];
 
-    // Analyze imports
+    // Analyze static imports
     for (const importDecl of sourceFile.getImportDeclarations()) {
         const moduleSpecifier = importDecl.getModuleSpecifierValue();
         const dependencySourceFile = importDecl.getModuleSpecifierSourceFile();
@@ -49,6 +52,33 @@ function analyzeSourceFile(sourceFile: SourceFile, projectRoot: string): Depende
             isExternal,
             resolvedPath: dependencySourceFile?.getFilePath()
         });
+    }
+
+    // Analyze dynamic imports: import("./path") or import('./path')
+    const sourceText = sourceFile.getFullText();
+    const dynamicImportRegex = /import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+    let match;
+    while ((match = dynamicImportRegex.exec(sourceText)) !== null) {
+        const moduleSpecifier = match[1];
+        
+        // Only track relative dynamic imports (local files)
+        if (moduleSpecifier.startsWith('.')) {
+            // Resolve the path
+            const currentDir = path.dirname(filePath);
+            const resolvedPath = path.resolve(currentDir, moduleSpecifier.replace(/\.js$/, '.ts'));
+            
+            // Check if not already in imports list
+            const exists = imports.some(i => i.moduleSpecifier === moduleSpecifier);
+            if (!exists) {
+                imports.push({
+                    moduleSpecifier,
+                    namedImports: [],
+                    defaultImport: undefined,
+                    isExternal: false,
+                    resolvedPath: resolvedPath
+                });
+            }
+        }
     }
 
     // Analyze exports
@@ -128,6 +158,9 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string, focusD
     internalDependencies.push(depInfo);
 
     const dependencies: string[] = [];
+    
+    // Current file's relative path for tracking references
+    const currentRelPath = path.relative(projectRoot, filePath);
 
     // Helper to check if a path is within focus directories
     const isInFocusDirs = (depFilePath: string): boolean => {
@@ -141,6 +174,7 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string, focusD
     };
 
     for (const importDecl of sourceFile.getImportDeclarations()) {
+        const moduleSpecifier = importDecl.getModuleSpecifierValue();
         const dependencySourceFile = importDecl.getModuleSpecifierSourceFile();
         if (dependencySourceFile && !dependencySourceFile.isInNodeModules()) {
             const depPath = dependencySourceFile.getFilePath();
@@ -149,12 +183,35 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string, focusD
             // Only traverse into dependency if it's in focus directories
             if (isInFocusDirs(depPath)) {
                 collectDependencies(dependencySourceFile, projectRoot, focusDirs, maxDepth, currentDepth + 1);
+            } else {
+                // Track this as a missing dependency
+                const relPath = path.relative(projectRoot, depPath).replace(/\\/g, '/');
+                const directory = path.dirname(relPath);
+                
+                if (missingDependencies.has(depPath)) {
+                    const existing = missingDependencies.get(depPath)!;
+                    if (!existing.referencedBy.includes(currentRelPath)) {
+                        existing.referencedBy.push(currentRelPath);
+                    }
+                    if (!existing.importSpecifiers.includes(moduleSpecifier)) {
+                        existing.importSpecifiers.push(moduleSpecifier);
+                    }
+                } else {
+                    missingDependencies.set(depPath, {
+                        filePath: depPath,
+                        relativePath: relPath,
+                        directory,
+                        referencedBy: [currentRelPath],
+                        importSpecifiers: [moduleSpecifier]
+                    });
+                }
             }
         }
     }
 
     // Also check re-exports
     for (const exportDecl of sourceFile.getExportDeclarations()) {
+        const moduleSpecifier = exportDecl.getModuleSpecifierValue() || '';
         const exportedSourceFile = exportDecl.getModuleSpecifierSourceFile();
         if (exportedSourceFile && !exportedSourceFile.isInNodeModules()) {
             const depPath = exportedSourceFile.getFilePath();
@@ -163,6 +220,82 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string, focusD
             // Only traverse into dependency if it's in focus directories
             if (isInFocusDirs(depPath)) {
                 collectDependencies(exportedSourceFile, projectRoot, focusDirs, maxDepth, currentDepth + 1);
+            } else {
+                // Track this as a missing dependency
+                const relPath = path.relative(projectRoot, depPath).replace(/\\/g, '/');
+                const directory = path.dirname(relPath);
+                
+                if (missingDependencies.has(depPath)) {
+                    const existing = missingDependencies.get(depPath)!;
+                    if (!existing.referencedBy.includes(currentRelPath)) {
+                        existing.referencedBy.push(currentRelPath);
+                    }
+                    if (moduleSpecifier && !existing.importSpecifiers.includes(moduleSpecifier)) {
+                        existing.importSpecifiers.push(moduleSpecifier);
+                    }
+                } else {
+                    missingDependencies.set(depPath, {
+                        filePath: depPath,
+                        relativePath: relPath,
+                        directory,
+                        referencedBy: [currentRelPath],
+                        importSpecifiers: moduleSpecifier ? [moduleSpecifier] : []
+                    });
+                }
+            }
+        }
+    }
+
+    // Also handle dynamic imports from depInfo.imports
+    // These were captured by the regex in analyzeSourceFile
+    for (const importInfo of depInfo.imports) {
+        if (importInfo.resolvedPath && !importInfo.isExternal) {
+            const depPath = importInfo.resolvedPath;
+            // Skip if already processed through static imports
+            if (dependencies.includes(depPath)) continue;
+            
+            // Check if file exists
+            if (!fs.existsSync(depPath)) continue;
+            
+            dependencies.push(depPath);
+            
+            if (isInFocusDirs(depPath)) {
+                // Load the source file and traverse
+                const project = sourceFile.getProject();
+                let depSourceFile = project.getSourceFile(depPath);
+                if (!depSourceFile) {
+                    try {
+                        depSourceFile = project.addSourceFileAtPath(depPath);
+                    } catch {
+                        // File might not exist
+                        continue;
+                    }
+                }
+                if (depSourceFile && !depSourceFile.isInNodeModules()) {
+                    collectDependencies(depSourceFile, projectRoot, focusDirs, maxDepth, currentDepth + 1);
+                }
+            } else {
+                // Track as missing dependency
+                const relPath = path.relative(projectRoot, depPath).replace(/\\/g, '/');
+                const directory = path.dirname(relPath);
+                
+                if (missingDependencies.has(depPath)) {
+                    const existing = missingDependencies.get(depPath)!;
+                    if (!existing.referencedBy.includes(currentRelPath)) {
+                        existing.referencedBy.push(currentRelPath);
+                    }
+                    if (!existing.importSpecifiers.includes(importInfo.moduleSpecifier)) {
+                        existing.importSpecifiers.push(importInfo.moduleSpecifier);
+                    }
+                } else {
+                    missingDependencies.set(depPath, {
+                        filePath: depPath,
+                        relativePath: relPath,
+                        directory,
+                        referencedBy: [currentRelPath],
+                        importSpecifiers: [importInfo.moduleSpecifier]
+                    });
+                }
             }
         }
     }
@@ -285,6 +418,7 @@ export async function analyzeProjectDependencies(input: AnalysisInput): Promise<
     internalDependencies.length = 0;
     externalDependencies.clear();
     fileGraph.clear();
+    missingDependencies.clear();
 
     const ProjectClass = await loadTsMorph();
     const tsConfigPath = path.join(input.projectPath, 'tsconfig.json');
@@ -421,10 +555,46 @@ export async function analyzeProjectDependencies(input: AnalysisInput): Promise<
         suggestedLibStructure.packageJson.dependencies[extDep] = '*';
     }
 
+    // Report missing dependencies
+    const missingDeps = Array.from(missingDependencies.values());
+    if (missingDeps.length > 0) {
+        console.log(`\n  ⚠️ Missing Dependencies Report:`);
+        console.log(`  Found ${missingDeps.length} files referenced but not included due to focus restrictions:\n`);
+        
+        // Group by directory
+        const byDirectory = new Map<string, typeof missingDeps>();
+        for (const dep of missingDeps) {
+            const dir = dep.directory;
+            if (!byDirectory.has(dir)) {
+                byDirectory.set(dir, []);
+            }
+            byDirectory.get(dir)!.push(dep);
+        }
+        
+        // Report grouped by directory
+        for (const [dir, deps] of byDirectory.entries()) {
+            const refCount = deps.reduce((sum, d) => sum + d.referencedBy.length, 0);
+            console.log(`  📁 ${dir}/ (${deps.length} files, ${refCount} references)`);
+            for (const dep of deps.slice(0, 3)) {
+                console.log(`      - ${path.basename(dep.relativePath)} (from ${dep.referencedBy.length} file${dep.referencedBy.length > 1 ? 's' : ''})`);
+            }
+            if (deps.length > 3) {
+                console.log(`      ... and ${deps.length - 3} more`);
+            }
+        }
+        
+        // Suggest fix
+        console.log(`\n  💡 To include these dependencies, add focus directories:`);
+        const suggestedDirs = Array.from(byDirectory.keys()).map(d => `-f "${d}"`).join(' ');
+        console.log(`     ${suggestedDirs}`);
+        console.log(`     Or use --include-deps to automatically include all required files\n`);
+    }
+
     return {
         entryPoints: entrySourceFiles.map(sf => sf.getFilePath()),
         internalDependencies,
         externalDependencies: Array.from(externalDependencies),
+        missingDependencies: missingDeps,
         fileGraph,
         suggestedLibStructure
     };

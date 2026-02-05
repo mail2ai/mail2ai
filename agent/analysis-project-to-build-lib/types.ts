@@ -9,6 +9,10 @@ export interface AnalysisInput {
     focusDirectories?: string[];
     /** Maximum depth for dependency traversal (default: unlimited). Use 1 for shallow extraction. */
     maxDepth?: number;
+    /** Automatically include all required dependencies (ignores focus restrictions) */
+    includeDeps?: boolean;
+    /** Generate stub files for missing external dependencies */
+    generateStubs?: boolean;
 }
 
 /** Configuration for the Analysis Agent */
@@ -21,6 +25,8 @@ export interface AgentConfig {
     temperature?: number;
     /** Enable verbose logging */
     verbose?: boolean;
+    /** Whether to use the Copilot SDK (default: true) */
+    useSdk?: boolean;
 }
 
 export interface DependencyInfo {
@@ -49,8 +55,24 @@ export interface AnalysisResult {
     entryPoints: string[];
     internalDependencies: DependencyInfo[];
     externalDependencies: string[];
+    /** Missing internal dependencies - files referenced but not included due to focus restrictions */
+    missingDependencies: MissingDependency[];
     fileGraph: Map<string, string[]>;
     suggestedLibStructure: LibStructure;
+}
+
+/** Represents a dependency that is referenced but not included in the extraction */
+export interface MissingDependency {
+    /** Absolute path to the missing file */
+    filePath: string;
+    /** Relative path from project root */
+    relativePath: string;
+    /** Directory containing the file (e.g., "src/config") */
+    directory: string;
+    /** Files that import this missing dependency */
+    referencedBy: string[];
+    /** The import specifiers used to reference this file */
+    importSpecifiers: string[];
 }
 
 export interface LibStructure {

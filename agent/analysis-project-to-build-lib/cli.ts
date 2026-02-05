@@ -22,6 +22,8 @@ program
     .option('-d, --directories <dirs...>', 'Directories to search (deprecated: prefer -e for precise extraction)')
     .option('-f, --focus <dirs...>', 'Focus directories - only include files from these directories (auto-detected from entry files)')
     .option('--max-depth <depth>', 'Maximum depth for dependency traversal (use 0 for shallow, 1 for one level)', parseInt)
+    .option('--include-deps', 'Automatically include all required dependencies (ignores focus restrictions)')
+    .option('--generate-stubs', 'Generate stub files for missing external dependencies')
     .option('--model <model>', 'AI model to use', 'gpt-5-mini')
     .option('--verbose', 'Enable verbose logging', true)
     .option('--save-logs', 'Save stage logs for optimization', true)
@@ -63,7 +65,9 @@ program
             outputLibName: options.name,
             directories: options.directories,
             focusDirectories: options.focus,
-            maxDepth: options.maxDepth
+            maxDepth: options.maxDepth,
+            includeDeps: options.includeDeps,
+            generateStubs: options.generateStubs
         };
 
         // Log entry files (preferred) or directories
@@ -82,10 +86,17 @@ program
         if (options.maxDepth !== undefined) {
             console.log(chalk.cyan(`Max depth: ${options.maxDepth}`));
         }
+        if (options.includeDeps) {
+            console.log(chalk.cyan(`Auto-include deps: enabled`));
+        }
+        if (options.generateStubs) {
+            console.log(chalk.cyan(`Generate stubs: enabled`));
+        }
 
         const agentConfig: AgentConfig = {
             model: options.model,
-            verbose: options.verbose
+            verbose: options.verbose,
+            useSdk: options.sdk !== false
         };
 
         console.log(chalk.blue('─'.repeat(50)) + '\n');

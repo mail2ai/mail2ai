@@ -28,7 +28,8 @@ const loadSkills = async () => ({
     extractAndMigrateCode: (await import('./skills/migrate-code.js')).extractAndMigrateCode,
     refactorImportPaths: (await import('./skills/refactor-paths.js')).refactorImportPaths,
     generateLibPackageJson: (await import('./skills/generate-package.js')).generateLibPackageJson,
-    buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib
+    buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib,
+    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs
 });
 
 const SKILLS_DIR = path.join(import.meta.dirname, 'skills');

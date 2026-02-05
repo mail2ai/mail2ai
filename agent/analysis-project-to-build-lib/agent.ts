@@ -39,7 +39,8 @@ const loadSkills = async () => ({
     extractAndMigrateCode: (await import('./skills/migrate-code.js')).extractAndMigrateCode,
     refactorImportPaths: (await import('./skills/refactor-paths.js')).refactorImportPaths,
     generateLibPackageJson: (await import('./skills/generate-package.js')).generateLibPackageJson,
-    buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib
+    buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib,
+    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs
 });
 
 export interface AgentTool {
@@ -57,6 +58,8 @@ export interface AgentConfig {
     maxTokens?: number;
     temperature?: number;
     verbose?: boolean;
+    /** Whether to use the Copilot SDK (default: true) */
+    useSdk?: boolean;
 }
 
 /**
@@ -139,7 +142,8 @@ export class AnalysisAgent {
             model: config.model || 'gpt-5-mini',
             maxTokens: config.maxTokens || 4096,
             temperature: config.temperature || 0.1,
-            verbose: config.verbose ?? true
+            verbose: config.verbose ?? true,
+            useSdk: config.useSdk ?? true
         };
         this.logger = new Logger({
             level: config.verbose ? LogLevel.DEBUG : LogLevel.INFO,
@@ -164,7 +168,6 @@ export class AnalysisAgent {
             this.logger.warn('No entry files specified - extraction may include more files than needed');
         }
 
-        const sdk = await loadCopilotSDK();
         const skills = await loadSkills();
 
         const libsDir = path.resolve(input.projectPath, '..', 'libs');
@@ -184,12 +187,19 @@ export class AnalysisAgent {
             // Ensure libs directory exists
             await fs.promises.mkdir(libsDir, { recursive: true });
 
-            if (sdk) {
-                // Use Copilot SDK for intelligent orchestration
-                return await this.runWithCopilotSDK(sdk, input, skills, outputPath, libName);
+            if (this.config.useSdk) {
+                const sdk = await loadCopilotSDK();
+                if (sdk) {
+                    // Use Copilot SDK for intelligent orchestration
+                    return await this.runWithCopilotSDK(sdk, input, skills, outputPath, libName);
+                } else {
+                    // Fallback to direct skill execution
+                    this.logger.warn('Copilot SDK not available, using direct skill execution');
+                    return await this.runDirectExecution(input, skills, outputPath, libName);
+                }
             } else {
-                // Fallback to direct skill execution
-                this.logger.warn('Copilot SDK not available, using direct skill execution');
+                // Explicitly disabled SDK, use direct skill execution
+                this.logger.info('SDK disabled, using direct skill execution');
                 return await this.runDirectExecution(input, skills, outputPath, libName);
             }
         } catch (error) {
@@ -479,6 +489,11 @@ Report any errors you encounter.`;
         this.logger.info(`   Found ${analysisResult.internalDependencies.length} internal files`);
         this.logger.info(`   Found ${analysisResult.externalDependencies.length} external dependencies`);
         
+        // Log missing dependencies if any
+        if (analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            this.logger.warn(`   Found ${analysisResult.missingDependencies.length} missing dependencies (files outside focus dirs)`);
+        }
+        
         // Save stage 1 log
         await this.logger.saveToFile(path.join(logsDir, 'stage1-analysis.log'));
 
@@ -489,6 +504,16 @@ Report any errors you encounter.`;
         
         // Save stage 2 log
         await this.logger.saveToFile(path.join(logsDir, 'stage2-migrate.log'));
+
+        // Step 2.5: Generate stubs for missing dependencies (if enabled)
+        if (input.generateStubs && analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            this.logger.step('Step 2.5: Generating stubs for missing dependencies...');
+            const stubResult = await skills.generateStubs(analysisResult, outputPath, input.projectPath);
+            this.logger.info(`   Generated ${stubResult.generatedFiles.length} stub files`);
+            
+            // Save stub generation log
+            await this.logger.saveToFile(path.join(logsDir, 'stage2.5-stubs.log'));
+        }
 
         // Step 3: Refactor imports
         this.logger.step('Step 3: Refactoring import paths...');
