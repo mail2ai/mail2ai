@@ -5,7 +5,7 @@
  * Run: npx tsx examples/with-mock-agent.ts
  */
 
-import { Mail2AI, MockAgent } from '../src/index.js';
+import { Mail2AI, MockAgent } from '../mail2task/index.js';
 
 async function main() {
     console.log('🚀 Starting Mail2AI (using MockAgent)...\n');

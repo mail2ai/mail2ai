@@ -5,10 +5,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { Scheduler } from '../src/scheduler/scheduler.js';
-import { TaskQueue } from '../src/queue/taskQueue.js';
-import { EmailService } from '../src/email/emailService.js';
-import { Task, TaskResult, IAgent } from '../src/types/index.js';
+import { Scheduler } from '../mail2task/scheduler/scheduler.js';
+import { TaskQueue } from '../mail2task/queue/taskQueue.js';
+import { EmailService } from '../mail2task/email/emailService.js';
+import { Task, TaskResult, IAgent } from '../mail2task/types/index.js';
 
 const TEST_DATA_DIR = './data/test';
 const TEST_QUEUE_PATH = path.join(TEST_DATA_DIR, 'scheduler-test-tasks.json');

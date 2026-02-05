@@ -13,7 +13,7 @@
  * Run: npm run test:integration
  */
 
-import { Mail2AI, IAgent, Task, TaskResult, TaskQueue, AgentProcessOptions } from '../src/index.js';
+import { Mail2AI, IAgent, Task, TaskResult, TaskQueue, AgentProcessOptions } from '../mail2task/index.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 

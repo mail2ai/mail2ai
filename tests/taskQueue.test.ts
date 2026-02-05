@@ -5,8 +5,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { TaskQueue } from '../src/queue/taskQueue.js';
-import { EmailContent } from '../src/types/index.js';
+import { TaskQueue } from '../mail2task/queue/taskQueue.js';
+import { EmailContent } from '../mail2task/types/index.js';
 
 const TEST_QUEUE_PATH = './data/test-tasks.json';
 

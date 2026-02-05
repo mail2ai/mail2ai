@@ -21,11 +21,12 @@
         "allowSyntheticDefaultImports": true,
         "baseUrl": ".",
         "paths": {
-            "@/*": ["src/*"]
+            "@/*": ["mail2task/*"]
         }
     },
     "include": [
-        "src/**/*",
+        "mail2task/**/*",
+        "agent/**/*",
         "bin/**/*",
         "examples/**/*"
     ],

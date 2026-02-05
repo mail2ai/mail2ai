@@ -3,16 +3,16 @@
     "version": "2.0.0",
     "description": "Mail to our own personal AI assistant. Any OS. Any Platform, Any AI Models. ",
     "type": "module",
-    "main": "dist/src/index.js",
-    "types": "dist/src/index.d.ts",
+    "main": "dist/mail2task/index.js",
+    "types": "dist/mail2task/index.d.ts",
     "exports": {
         ".": {
-            "types": "./dist/src/index.d.ts",
-            "import": "./dist/src/index.js"
+            "types": "./dist/mail2task/index.d.ts",
+            "import": "./dist/mail2task/index.js"
         }
     },
     "files": [
-        "dist/src",
+        "dist/mail2task",
         "README.md"
     ],
     "bin": {
@@ -20,12 +20,12 @@
     },
     "scripts": {
         "build": "tsc",
-        "dev": "tsx watch src/index.ts",
-        "start": "node dist/src/index.js",
+        "dev": "tsx watch mail2task/index.ts",
+        "start": "node dist/mail2task/index.js",
         "test": "vitest",
         "test:run": "vitest run",
         "test:integration": "tsx tests/integration.test.ts",
-        "lint": "eslint src --ext .ts",
+        "lint": "eslint mail2task --ext .ts",
         "cli": "tsx bin/mail2ai.ts",
         "example": "tsx examples/with-mock-agent.ts",
         "example:library": "npm run build && node dist/examples/as-library.js"
@@ -43,6 +43,7 @@
     "author": "",
     "license": "MIT",
     "dependencies": {
+        "@github/copilot-sdk": "^0.1.20",
         "chalk": "^5.3.0",
         "commander": "^14.0.3",
         "dotenv": "^17.2.3",
@@ -52,9 +53,9 @@
         "nodemailer": "^7.0.13",
         "ora": "^9.1.0",
         "proper-lockfile": "^4.1.2",
+        "ts-morph": "^24.0.0",
         "uuid": "^13.0.0",
-        "zod": "^4.3.6",
-        "@github/copilot-sdk": "^0.1.20"
+        "zod": "^4.3.6"
     },
     "devDependencies": {
         "@types/mailparser": "^3.4.6",

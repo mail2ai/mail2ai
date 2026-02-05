@@ -1,0 +1,247 @@
+import type { Project as TsMorphProject, SourceFile } from 'ts-morph';
+import * as path from 'path';
+import type { AnalysisInput, AnalysisResult, DependencyInfo, ImportInfo, ExportInfo, LibStructure, FileToMigrate } from '../types.js';
+
+// Dynamic import for ts-morph
+let Project: typeof TsMorphProject;
+
+async function loadTsMorph() {
+    if (!Project) {
+        const tsMorph = await import('ts-morph');
+        Project = tsMorph.Project;
+    }
+    return Project;
+}
+
+const processedFiles = new Set<string>();
+const internalDependencies: DependencyInfo[] = [];
+const externalDependencies = new Set<string>();
+const fileGraph = new Map<string, string[]>();
+
+function analyzeSourceFile(sourceFile: SourceFile, projectRoot: string): DependencyInfo {
+    const filePath = sourceFile.getFilePath();
+    const relativePath = path.relative(projectRoot, filePath);
+
+    const imports: ImportInfo[] = [];
+    const exports: ExportInfo[] = [];
+
+    // Analyze imports
+    for (const importDecl of sourceFile.getImportDeclarations()) {
+        const moduleSpecifier = importDecl.getModuleSpecifierValue();
+        const dependencySourceFile = importDecl.getModuleSpecifierSourceFile();
+        const isExternal = !dependencySourceFile || dependencySourceFile.isInNodeModules();
+
+        const namedImports = importDecl.getNamedImports().map((ni: { getName: () => string }) => ni.getName());
+        const defaultImport = importDecl.getDefaultImport()?.getText();
+
+        if (isExternal && !moduleSpecifier.startsWith('.')) {
+            // Extract package name from module specifier
+            const pkgName = moduleSpecifier.startsWith('@')
+                ? moduleSpecifier.split('/').slice(0, 2).join('/')
+                : moduleSpecifier.split('/')[0];
+            externalDependencies.add(pkgName);
+        }
+
+        imports.push({
+            moduleSpecifier,
+            namedImports,
+            defaultImport,
+            isExternal,
+            resolvedPath: dependencySourceFile?.getFilePath()
+        });
+    }
+
+    // Analyze exports
+    for (const exportDecl of sourceFile.getExportDeclarations()) {
+        const namedExports = exportDecl.getNamedExports();
+        for (const namedExport of namedExports) {
+            exports.push({
+                name: namedExport.getName(),
+                kind: 'variable',
+                isReExport: true
+            });
+        }
+    }
+
+    // Analyze exported declarations
+    for (const func of sourceFile.getFunctions()) {
+        if (func.isExported()) {
+            exports.push({
+                name: func.getName() || 'default',
+                kind: func.isDefaultExport() ? 'default' : 'function',
+                isReExport: false
+            });
+        }
+    }
+
+    for (const cls of sourceFile.getClasses()) {
+        if (cls.isExported()) {
+            exports.push({
+                name: cls.getName() || 'default',
+                kind: cls.isDefaultExport() ? 'default' : 'class',
+                isReExport: false
+            });
+        }
+    }
+
+    for (const iface of sourceFile.getInterfaces()) {
+        if (iface.isExported()) {
+            exports.push({
+                name: iface.getName(),
+                kind: 'interface',
+                isReExport: false
+            });
+        }
+    }
+
+    for (const typeAlias of sourceFile.getTypeAliases()) {
+        if (typeAlias.isExported()) {
+            exports.push({
+                name: typeAlias.getName(),
+                kind: 'type',
+                isReExport: false
+            });
+        }
+    }
+
+    return {
+        filePath,
+        relativePath,
+        imports,
+        exports,
+        isInternal: true
+    };
+}
+
+function collectDependencies(sourceFile: SourceFile, projectRoot: string): void {
+    const filePath = sourceFile.getFilePath();
+    if (processedFiles.has(filePath)) return;
+
+    processedFiles.add(filePath);
+
+    const depInfo = analyzeSourceFile(sourceFile, projectRoot);
+    internalDependencies.push(depInfo);
+
+    const dependencies: string[] = [];
+
+    for (const importDecl of sourceFile.getImportDeclarations()) {
+        const dependencySourceFile = importDecl.getModuleSpecifierSourceFile();
+        if (dependencySourceFile && !dependencySourceFile.isInNodeModules()) {
+            const depPath = dependencySourceFile.getFilePath();
+            dependencies.push(depPath);
+            collectDependencies(dependencySourceFile, projectRoot);
+        }
+    }
+
+    // Also check re-exports
+    for (const exportDecl of sourceFile.getExportDeclarations()) {
+        const exportedSourceFile = exportDecl.getModuleSpecifierSourceFile();
+        if (exportedSourceFile && !exportedSourceFile.isInNodeModules()) {
+            const depPath = exportedSourceFile.getFilePath();
+            dependencies.push(depPath);
+            collectDependencies(exportedSourceFile, projectRoot);
+        }
+    }
+
+    fileGraph.set(filePath, dependencies);
+}
+
+function findEntryPoints(project: InstanceType<typeof TsMorphProject>, projectRoot: string, moduleDescription: string): SourceFile[] {
+    const sourceFiles = project.getSourceFiles();
+    const entryPoints: SourceFile[] = [];
+
+    // Keywords from module description
+    const keywords = moduleDescription.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+
+    for (const sf of sourceFiles) {
+        if (sf.isInNodeModules()) continue;
+
+        const filePath = sf.getFilePath().toLowerCase();
+        const fileName = path.basename(filePath, path.extname(filePath));
+
+        // Check if file name matches keywords
+        const matchesKeyword = keywords.some(kw =>
+            fileName.includes(kw) || filePath.includes(kw)
+        );
+
+        // Check if it's an index file in a relevant directory
+        const isRelevantIndex = fileName === 'index' && keywords.some(kw =>
+            path.dirname(filePath).includes(kw)
+        );
+
+        if (matchesKeyword || isRelevantIndex) {
+            entryPoints.push(sf);
+        }
+    }
+
+    return entryPoints;
+}
+
+export async function analyzeProjectDependencies(input: AnalysisInput): Promise<AnalysisResult> {
+    // Reset state
+    processedFiles.clear();
+    internalDependencies.length = 0;
+    externalDependencies.clear();
+    fileGraph.clear();
+
+    const ProjectClass = await loadTsMorph();
+    const tsConfigPath = path.join(input.projectPath, 'tsconfig.json');
+    const project = new ProjectClass({ tsConfigFilePath: tsConfigPath });
+
+    let entrySourceFiles: SourceFile[] = [];
+
+    if (input.entryFiles && input.entryFiles.length > 0) {
+        for (const entryFile of input.entryFiles) {
+            const sf = project.getSourceFile(path.resolve(input.projectPath, entryFile));
+            if (sf) entrySourceFiles.push(sf);
+        }
+    } else {
+        entrySourceFiles = findEntryPoints(project, input.projectPath, input.moduleDescription);
+    }
+
+    if (entrySourceFiles.length === 0) {
+        throw new Error(`No entry points found for module: ${input.moduleDescription}`);
+    }
+
+    // Collect all dependencies starting from entry points
+    for (const entrySf of entrySourceFiles) {
+        collectDependencies(entrySf, input.projectPath);
+    }
+
+    // Build library structure
+    const libName = input.outputLibName || `lib-${Date.now()}`;
+    const outputPath = path.resolve(input.projectPath, '..', 'libs', libName);
+
+    const filesToMigrate: FileToMigrate[] = internalDependencies.map(dep => ({
+        sourcePath: dep.filePath,
+        targetPath: path.join(outputPath, 'src', dep.relativePath),
+        pathMappings: []
+    }));
+
+    const suggestedLibStructure: LibStructure = {
+        name: libName,
+        outputPath,
+        files: filesToMigrate,
+        packageJson: {
+            name: libName,
+            version: '1.0.0',
+            main: './dist/index.js',
+            types: './dist/index.d.ts',
+            dependencies: {},
+            peerDependencies: {}
+        }
+    };
+
+    // Add external dependencies to package.json
+    for (const extDep of externalDependencies) {
+        suggestedLibStructure.packageJson.dependencies[extDep] = '*';
+    }
+
+    return {
+        entryPoints: entrySourceFiles.map(sf => sf.getFilePath()),
+        internalDependencies,
+        externalDependencies: Array.from(externalDependencies),
+        fileGraph,
+        suggestedLibStructure
+    };
+}

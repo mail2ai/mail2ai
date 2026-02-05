@@ -17,7 +17,7 @@
 
 // Import from source (dev mode)
 // Production: import { Mail2AI, IAgent, Task, TaskResult, AgentProcessOptions, logger } from 'mail2ai';
-import { Mail2AI, IAgent, Task, TaskResult, AgentProcessOptions, logger } from '../src/index.js';
+import { Mail2AI, IAgent, Task, TaskResult, AgentProcessOptions, logger } from '../mail2task/index.js';
 
 /**
  * Example: custom Agent implementation.

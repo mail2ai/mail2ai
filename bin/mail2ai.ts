@@ -10,9 +10,9 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import 'dotenv/config';
-import { Mail2AI, MockAgent, IAgent, Task, TaskResult } from '../src/index.js';
-import { TaskQueue } from '../src/queue/taskQueue.js';
-import { logger } from '../src/utils/logger.js';
+import { Mail2AI, MockAgent, IAgent, Task, TaskResult } from '../mail2task/index.js';
+import { TaskQueue } from '../mail2task/queue/taskQueue.js';
+import { logger } from '../mail2task/utils/logger.js';
 
 /**
  * Try to load the Copilot SDK and create an Agent.
