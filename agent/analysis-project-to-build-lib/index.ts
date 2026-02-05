@@ -6,6 +6,12 @@
  * 
  * T-DAERA Enhancement: Supports dynamic tracing for smart stub generation.
  * 
+ * v3.0 Enhancement: Design-Driven Closed-Loop Refactoring Architecture
+ * - Generates architecture diagrams before extraction
+ * - Entry-first public API definition
+ * - Test generation from trace data
+ * - Iterative fix loop for automatic error resolution
+ * 
  * Default model: gpt-5-mini
  */
 
@@ -23,7 +29,14 @@ import type {
     TestScenario,
     SmartStubConfig,
     StubSynthesisResult,
-    VerificationResult
+    VerificationResult,
+    // v3.0 Design-Driven types
+    DesignDrivenConfig,
+    DesignDrivenResult,
+    ArchitectureArtifacts,
+    LibraryInterface,
+    GeneratedTestSuite,
+    FixLoopResult
 } from './types.js';
 import { AnalysisAgent, type AgentConfig } from './agent.js';
 import { Logger, LogLevel } from './logger.js';
@@ -41,6 +54,16 @@ export type {
     SmartStubConfig,
     StubSynthesisResult,
     VerificationResult
+};
+
+// Re-export v3.0 Design-Driven types
+export type {
+    DesignDrivenConfig,
+    DesignDrivenResult,
+    ArchitectureArtifacts,
+    LibraryInterface,
+    GeneratedTestSuite,
+    FixLoopResult
 };
 
 // Dynamic imports for skills to handle .ts/.js resolution

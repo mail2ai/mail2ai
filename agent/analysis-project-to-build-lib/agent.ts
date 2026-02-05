@@ -6,9 +6,28 @@
  * structure the output library.
  * 
  * T-DAERA Enhancement: Supports dynamic tracing for smart stub generation.
+ * 
+ * v3.0 Enhancement: Design-Driven Closed-Loop Refactoring Architecture
+ * - Generates architecture diagrams before extraction
+ * - Entry-first public API definition
+ * - Test generation from trace data
+ * - Iterative fix loop for automatic error resolution
  */
 
-import type { AnalysisInput, MigrationResult, AnalysisResult, SkillContext, TraceLog, TestScenario } from './types.js';
+import type { 
+    AnalysisInput, 
+    MigrationResult, 
+    AnalysisResult, 
+    SkillContext, 
+    TraceLog, 
+    TestScenario,
+    DesignDrivenConfig,
+    DesignDrivenResult,
+    ArchitectureArtifacts,
+    LibraryInterface,
+    GeneratedTestSuite,
+    FixLoopResult
+} from './types.js';
 import type { CopilotClient, CopilotSession, defineTool } from '@github/copilot-sdk';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -43,6 +62,7 @@ async function loadCopilotSDK(): Promise<CopilotSDKType | null> {
 
 // Load skills dynamically
 const loadSkills = async () => ({
+    // Core skills
     analyzeProjectDependencies: (await import('./skills/analyze-dependencies.js')).analyzeProjectDependencies,
     extractAndMigrateCode: (await import('./skills/migrate-code.js')).extractAndMigrateCode,
     refactorImportPaths: (await import('./skills/refactor-paths.js')).refactorImportPaths,
@@ -56,7 +76,14 @@ const loadSkills = async () => ({
     identifyModulesToSpy: (await import('./skills/runtime-tracer.js')).identifyModulesToSpy,
     runTracing: (await import('./skills/runtime-tracer.js')).runTracing,
     mergeTraceLogs: (await import('./skills/runtime-tracer.js')).mergeTraceLogs,
-    synthesizeSmartStubs: (await import('./skills/synthesize-stubs.js')).synthesizeSmartStubs
+    synthesizeSmartStubs: (await import('./skills/synthesize-stubs.js')).synthesizeSmartStubs,
+    // v3.0 Design-Driven skills
+    generateArchitectureArtifacts: (await import('./skills/design-synthesis.js')).generateArchitectureArtifacts,
+    defineLibraryInterface: (await import('./skills/design-synthesis.js')).defineLibraryInterface,
+    writeLibraryInterface: (await import('./skills/design-synthesis.js')).writeLibraryInterface,
+    generateTestsFromTrace: (await import('./skills/generate-tests.js')).generateTestsFromTrace,
+    runFixLoop: (await import('./skills/fix-loop.js')).runFixLoop,
+    generateFixLoopReport: (await import('./skills/fix-loop.js')).generateFixLoopReport
 });
 
 export interface AgentTool {
@@ -202,6 +229,12 @@ export class AnalysisAgent {
         try {
             // Ensure libs directory exists
             await fs.promises.mkdir(libsDir, { recursive: true });
+
+            // Check if v3.0 Design-Driven mode is enabled
+            if (input.designDriven?.enabled) {
+                this.logger.info('Using v3.0 Design-Driven execution mode');
+                return await this.runDesignDrivenExecution(input, skills, outputPath, libName);
+            }
 
             if (this.config.useSdk) {
                 const sdk = await loadCopilotSDK();
@@ -684,6 +717,453 @@ Report any errors you encounter.`;
         }
 
         return buildResult;
+    }
+
+    /**
+     * Run v3.0 Design-Driven extraction workflow.
+     * This is the enhanced flow with architecture generation, entry-first design,
+     * test generation from traces, and iterative fix loop.
+     */
+    private async runDesignDrivenExecution(
+        input: AnalysisInput,
+        skills: Awaited<ReturnType<typeof loadSkills>>,
+        outputPath: string,
+        libName: string
+    ): Promise<DesignDrivenResult> {
+        const startTime = Date.now();
+        const phaseTimings: Record<string, number> = {};
+        
+        this.logger.info('Running v3.0 Design-Driven execution...');
+        const logsDir = path.join(outputPath, 'logs');
+        await fs.promises.mkdir(logsDir, { recursive: true });
+
+        let architectureArtifacts: ArchitectureArtifacts | undefined;
+        let libraryInterface: LibraryInterface | undefined;
+        let testSuite: GeneratedTestSuite | undefined;
+        let fixLoopResult: FixLoopResult | undefined;
+        let traceLog: TraceLog | null = null;
+
+        // ============================================================
+        // PHASE 1: Context Awareness (Analysis + Tracing)
+        // ============================================================
+        const phase1Start = Date.now();
+        
+        // Step 1: Analyze dependencies
+        this.logger.step('Phase 1.1: Analyzing project dependencies...');
+        const analysisResult = await skills.analyzeProjectDependencies(input);
+        this.analysisResult = analysisResult;
+        this.context!.analysisResult = analysisResult;
+
+        this.logger.info(`   Found ${analysisResult.entryPoints.length} entry points`);
+        this.logger.info(`   Found ${analysisResult.internalDependencies.length} internal files`);
+        this.logger.info(`   Found ${analysisResult.externalDependencies.length} external dependencies`);
+        
+        if (analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            this.logger.warn(`   Found ${analysisResult.missingDependencies.length} missing dependencies`);
+        }
+        
+        await this.logger.saveToFile(path.join(logsDir, 'phase1.1-analysis.log'));
+
+        // Step 1.2: Dynamic Tracing (if enabled)
+        if (input.tracing?.enabled) {
+            this.logger.step('Phase 1.2: T-DAERA Dynamic Tracing...');
+            
+            try {
+                const modulesToSpy = input.tracing.spyModules || skills.identifyModulesToSpy(analysisResult);
+                this.logger.info(`   Spying on ${modulesToSpy.length} modules`);
+                
+                const scenarios = input.tracing.testScenarioPath
+                    ? await loadCustomScenarios(input.tracing.testScenarioPath)
+                    : await skills.generateScenarios(analysisResult, input.projectPath);
+                
+                this.logger.info(`   Generated ${scenarios.length} test scenarios`);
+                
+                const traceLogs: TraceLog[] = [];
+                for (const scenario of scenarios) {
+                    this.logger.debug(`   Running scenario: ${scenario.name}`);
+                    try {
+                        const log = await skills.runTracing(
+                            input.projectPath,
+                            scenario,
+                            modulesToSpy,
+                            input.tracing
+                        );
+                        traceLogs.push(log);
+                        this.logger.debug(`     Captured ${log.entries.length} trace entries`);
+                    } catch (error) {
+                        this.logger.warn(`     Scenario ${scenario.name} failed:`, error);
+                    }
+                }
+                
+                if (traceLogs.length > 0) {
+                    traceLog = skills.mergeTraceLogs(traceLogs);
+                    this.context!.traceLog = traceLog;
+                    this.logger.info(`   Total: ${traceLog.stats.totalCalls} calls, ${traceLog.stats.uniqueMethods} methods`);
+                    
+                    await fs.promises.writeFile(
+                        path.join(logsDir, 'trace-log.json'),
+                        JSON.stringify(traceLog, null, 2)
+                    );
+                }
+                
+                await this.logger.saveToFile(path.join(logsDir, 'phase1.2-tracing.log'));
+            } catch (error) {
+                this.logger.warn('   Tracing failed:', error);
+            }
+        }
+        
+        phaseTimings.analysis = Date.now() - phase1Start;
+
+        // ============================================================
+        // PHASE 2: Design Synthesis (Architecture + Interface)
+        // ============================================================
+        const phase2Start = Date.now();
+        
+        if (input.designDriven?.generateDiagrams !== false) {
+            this.logger.step('Phase 2.1: Generating architecture artifacts...');
+            try {
+                architectureArtifacts = await skills.generateArchitectureArtifacts(
+                    analysisResult,
+                    input.projectPath,
+                    outputPath
+                );
+                this.logger.info(`   Created ${architectureArtifacts.documentationPath}`);
+                this.logger.info(`   Found ${architectureArtifacts.crossBoundaryDeps.length} cross-boundary dependencies`);
+                
+                await this.logger.saveToFile(path.join(logsDir, 'phase2.1-architecture.log'));
+            } catch (error) {
+                this.logger.warn('   Architecture generation failed:', error);
+            }
+        }
+
+        this.logger.step('Phase 2.2: Defining library interface...');
+        try {
+            libraryInterface = await skills.defineLibraryInterface(
+                analysisResult,
+                input.projectPath,
+                libName
+            );
+            this.logger.info(`   Defined ${libraryInterface.functions.length} functions`);
+            this.logger.info(`   Defined ${libraryInterface.classes.length} classes`);
+            this.logger.info(`   Defined ${libraryInterface.types.length} types`);
+            
+            await this.logger.saveToFile(path.join(logsDir, 'phase2.2-interface.log'));
+        } catch (error) {
+            this.logger.warn('   Interface definition failed:', error);
+        }
+        
+        phaseTimings.design = Date.now() - phase2Start;
+
+        // ============================================================
+        // PHASE 3: Structural Transformation
+        // ============================================================
+        const phase3Start = Date.now();
+
+        // Step 3.1: Migrate code
+        this.logger.step('Phase 3.1: Migrating code files...');
+        const migrationProgress = await skills.extractAndMigrateCode(analysisResult, outputPath);
+        this.logger.info(`   Copied ${migrationProgress.copiedFiles.length} files`);
+        await this.logger.saveToFile(path.join(logsDir, 'phase3.1-migrate.log'));
+
+        // Step 3.2: Write library interface (Entry-First)
+        if (libraryInterface) {
+            this.logger.step('Phase 3.2: Writing library interface (Entry-First)...');
+            try {
+                await skills.writeLibraryInterface(libraryInterface, outputPath);
+                this.logger.info(`   Created src/index.ts with public API`);
+                await this.logger.saveToFile(path.join(logsDir, 'phase3.2-interface.log'));
+            } catch (error) {
+                this.logger.warn('   Interface writing failed:', error);
+            }
+        }
+
+        // Step 3.3: Generate stubs
+        if (analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            if (traceLog && traceLog.entries.length > 0) {
+                this.logger.step('Phase 3.3: Synthesizing smart stubs from trace data...');
+                const stubResult = await skills.synthesizeSmartStubs(
+                    traceLog,
+                    analysisResult,
+                    outputPath,
+                    input.projectPath,
+                    {
+                        preserveTypes: true,
+                        generateWarnings: true,
+                        fallbackBehavior: 'warn',
+                        pruneUncalled: false
+                    }
+                );
+                this.logger.info(`   Generated ${stubResult.files.length} smart stubs`);
+            } else if (input.generateStubs) {
+                this.logger.step('Phase 3.3: Generating static stubs...');
+                const stubResult = await skills.generateStubs(analysisResult, outputPath, input.projectPath);
+                this.logger.info(`   Generated ${stubResult.generatedFiles.length} stub files`);
+            }
+            await this.logger.saveToFile(path.join(logsDir, 'phase3.3-stubs.log'));
+        }
+
+        // Step 3.4: Refactor imports
+        this.logger.step('Phase 3.4: Refactoring import paths...');
+        const refactorResult = await skills.refactorImportPaths(outputPath);
+        this.logger.info(`   Modified ${refactorResult.modifiedFiles.length} files`);
+        await this.logger.saveToFile(path.join(logsDir, 'phase3.4-refactor.log'));
+
+        // Step 3.5: Generate package.json
+        this.logger.step('Phase 3.5: Generating package.json...');
+        const packageResult = await skills.generateLibPackageJson(
+            outputPath,
+            libName,
+            analysisResult.externalDependencies
+        );
+        this.logger.info(`   Created: ${packageResult.packageJsonPath}`);
+        await this.logger.saveToFile(path.join(logsDir, 'phase3.5-package.log'));
+
+        phaseTimings.extraction = Date.now() - phase3Start;
+
+        // ============================================================
+        // PHASE 4: Verification Loop
+        // ============================================================
+        const phase4Start = Date.now();
+
+        // Step 4.1: Generate tests from trace
+        if (input.designDriven?.generateTests !== false && traceLog && traceLog.entries.length > 0) {
+            this.logger.step('Phase 4.1: Generating tests from trace data...');
+            try {
+                testSuite = await skills.generateTestsFromTrace(
+                    traceLog,
+                    analysisResult,
+                    outputPath,
+                    { testFramework: 'vitest' }
+                );
+                this.logger.info(`   Generated ${testSuite.testCases.length} test cases`);
+                this.logger.info(`   Coverage: ${testSuite.coverage.modules} modules, ${testSuite.coverage.methods} methods`);
+                await this.logger.saveToFile(path.join(logsDir, 'phase4.1-tests.log'));
+            } catch (error) {
+                this.logger.warn('   Test generation failed:', error);
+            }
+        }
+
+        // Step 4.2: Build and validate
+        this.logger.step('Phase 4.2: Building and validating...');
+        let buildResult = await skills.buildAndValidateLib(outputPath);
+        this.context!.migrationResult = buildResult;
+        await this.logger.saveToFile(path.join(logsDir, 'phase4.2-build.log'));
+
+        // Step 4.3: Iterative fix loop (if enabled and there are errors)
+        if (input.designDriven?.iterativeFixLoop !== false && buildResult.errors.length > 0) {
+            this.logger.step('Phase 4.3: Running iterative fix loop...');
+            try {
+                fixLoopResult = await skills.runFixLoop(
+                    outputPath,
+                    analysisResult,
+                    input.projectPath,
+                    traceLog,
+                    {
+                        maxIterations: input.designDriven?.maxFixIterations || 10,
+                        autoFixMode: input.designDriven?.autoFixMode || 'both',
+                        verbose: this.config.verbose
+                    }
+                );
+                
+                this.logger.info(`   Iterations: ${fixLoopResult.iterations}`);
+                this.logger.info(`   Files added: ${fixLoopResult.addedFiles.length}`);
+                this.logger.info(`   Stubs generated: ${fixLoopResult.generatedStubs.length}`);
+                this.logger.info(`   Remaining errors: ${fixLoopResult.remainingErrors.length}`);
+                
+                // Save fix loop report
+                const reportPath = path.join(logsDir, 'fix-loop-report.md');
+                await fs.promises.writeFile(reportPath, skills.generateFixLoopReport(fixLoopResult));
+                
+                // Re-run build after fixes
+                if (fixLoopResult.addedFiles.length > 0 || fixLoopResult.generatedStubs.length > 0) {
+                    this.logger.step('Phase 4.4: Re-building after fixes...');
+                    buildResult = await skills.buildAndValidateLib(outputPath);
+                    this.context!.migrationResult = buildResult;
+                }
+                
+                await this.logger.saveToFile(path.join(logsDir, 'phase4.3-fixloop.log'));
+            } catch (error) {
+                this.logger.warn('   Fix loop failed:', error);
+            }
+        }
+
+        // Step 4.5: Verification (if enabled)
+        if (input.verify && traceLog && traceLog.entries.length > 0) {
+            this.logger.step('Phase 4.5: T-DAERA Verification...');
+            try {
+                const scenarios = input.tracing?.testScenarioPath
+                    ? await loadCustomScenarios(input.tracing.testScenarioPath)
+                    : await skills.generateScenarios(analysisResult, outputPath);
+                
+                let passed = 0;
+                let failed = 0;
+                
+                for (const scenario of scenarios) {
+                    this.logger.debug(`   Verifying scenario: ${scenario.name}`);
+                    try {
+                        const adjustedScenario = {
+                            ...scenario,
+                            entryFile: scenario.entryFile.replace(/^src\//, 'dist/').replace(/\.tsx?$/, '.js')
+                        };
+                        
+                        await skills.runTracing(
+                            outputPath,
+                            adjustedScenario,
+                            [],
+                            { enabled: true, maxTraceTime: input.tracing?.maxTraceTime || 10000 }
+                        );
+                        passed++;
+                        this.logger.debug(`     ✓ ${scenario.name}`);
+                    } catch (error) {
+                        failed++;
+                        this.logger.warn(`     ✗ ${scenario.name}:`, error);
+                    }
+                }
+                
+                this.logger.info(`   Verification: ${passed} passed, ${failed} failed`);
+                
+                if (failed > 0) {
+                    buildResult.errors.push({
+                        file: 'verification',
+                        error: `${failed} scenario(s) failed verification`,
+                        phase: 'build'
+                    });
+                }
+                
+                await this.logger.saveToFile(path.join(logsDir, 'phase4.5-verify.log'));
+            } catch (error) {
+                this.logger.warn('   Verification failed:', error);
+            }
+        }
+
+        phaseTimings.verification = Date.now() - phase4Start;
+
+        // Generate final report
+        await this.generateExtractionReport(
+            outputPath,
+            buildResult,
+            architectureArtifacts,
+            libraryInterface,
+            testSuite,
+            fixLoopResult,
+            phaseTimings
+        );
+
+        return {
+            ...buildResult,
+            architecture: architectureArtifacts,
+            libraryInterface,
+            testSuite,
+            fixLoopResult,
+            phaseDurations: {
+                analysis: phaseTimings.analysis,
+                design: phaseTimings.design,
+                extraction: phaseTimings.extraction,
+                verification: phaseTimings.verification,
+                total: Date.now() - startTime
+            }
+        };
+    }
+
+    /**
+     * Generate final extraction report.
+     */
+    private async generateExtractionReport(
+        outputPath: string,
+        buildResult: MigrationResult,
+        architecture: ArchitectureArtifacts | undefined,
+        libraryInterface: LibraryInterface | undefined,
+        testSuite: GeneratedTestSuite | undefined,
+        fixLoopResult: FixLoopResult | undefined,
+        phaseDurations: Record<string, number>
+    ): Promise<void> {
+        const lines: string[] = [
+            '# Extraction Report',
+            '',
+            `*Generated by Analysis Agent v3.0 (Design-Driven)*`,
+            `*Date: ${new Date().toISOString()}*`,
+            '',
+            '## Summary',
+            '',
+            `- **Status:** ${buildResult.success ? '✅ Success' : '❌ Errors detected'}`,
+            `- **Migrated files:** ${buildResult.migratedFiles.length}`,
+            `- **Errors:** ${buildResult.errors.length}`,
+            '',
+            '## Phase Durations',
+            '',
+            '| Phase | Duration |',
+            '|-------|----------|',
+            `| Analysis | ${(phaseDurations.analysis / 1000).toFixed(2)}s |`,
+            `| Design | ${(phaseDurations.design / 1000).toFixed(2)}s |`,
+            `| Extraction | ${(phaseDurations.extraction / 1000).toFixed(2)}s |`,
+            `| Verification | ${(phaseDurations.verification / 1000).toFixed(2)}s |`,
+            `| **Total** | **${(phaseDurations.total / 1000).toFixed(2)}s** |`,
+            ''
+        ];
+
+        if (libraryInterface) {
+            lines.push(
+                '## Library Interface',
+                '',
+                `- **Functions:** ${libraryInterface.functions.length}`,
+                `- **Classes:** ${libraryInterface.classes.length}`,
+                `- **Types:** ${libraryInterface.types.length}`,
+                ''
+            );
+        }
+
+        if (testSuite) {
+            lines.push(
+                '## Generated Tests',
+                '',
+                `- **Test cases:** ${testSuite.testCases.length}`,
+                `- **Modules covered:** ${testSuite.coverage.modules}`,
+                `- **Methods covered:** ${testSuite.coverage.methods}`,
+                ''
+            );
+        }
+
+        if (fixLoopResult) {
+            lines.push(
+                '## Fix Loop Results',
+                '',
+                `- **Iterations:** ${fixLoopResult.iterations}`,
+                `- **All resolved:** ${fixLoopResult.allResolved ? 'Yes' : 'No'}`,
+                `- **Files added:** ${fixLoopResult.addedFiles.length}`,
+                `- **Stubs generated:** ${fixLoopResult.generatedStubs.length}`,
+                ''
+            );
+        }
+
+        if (buildResult.errors.length > 0) {
+            lines.push(
+                '## Errors',
+                '',
+                '| File | Error | Phase |',
+                '|------|-------|-------|'
+            );
+            for (const err of buildResult.errors.slice(0, 20)) {
+                lines.push(`| ${err.file} | ${err.error.substring(0, 60)} | ${err.phase} |`);
+            }
+            if (buildResult.errors.length > 20) {
+                lines.push(`| ... | *${buildResult.errors.length - 20} more errors* | |`);
+            }
+            lines.push('');
+        }
+
+        if (architecture) {
+            lines.push(
+                '## Architecture',
+                '',
+                `See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed diagrams.`,
+                ''
+            );
+        }
+
+        await fs.promises.writeFile(
+            path.join(outputPath, 'EXTRACTION_REPORT.md'),
+            lines.join('\n')
+        );
     }
 
     /**

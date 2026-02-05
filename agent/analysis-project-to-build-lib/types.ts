@@ -17,6 +17,8 @@ export interface AnalysisInput {
     tracing?: TracingConfig;
     /** T-DAERA: Verify extraction by running scenarios in new environment */
     verify?: boolean;
+    /** v3.0: Enable design-driven closed-loop refactoring */
+    designDriven?: DesignDrivenConfig;
 }
 
 /** Configuration for the Analysis Agent */
@@ -343,4 +345,211 @@ export interface TraceMismatch {
     expected: unknown;
     /** New return value */
     actual: unknown;
+}
+
+// ============================================================================
+// v3.0: Design-Driven Closed-Loop Refactoring Architecture
+// ============================================================================
+
+/**
+ * Configuration for the v3.0 design-driven extraction.
+ */
+export interface DesignDrivenConfig {
+    /** Enable v3.0 design-driven mode */
+    enabled: boolean;
+    /** Generate architecture diagrams (Mermaid) */
+    generateDiagrams: boolean;
+    /** Generate test cases from trace data */
+    generateTests: boolean;
+    /** Enable iterative fix loop */
+    iterativeFixLoop: boolean;
+    /** Maximum fix iterations */
+    maxFixIterations?: number;
+    /** Auto-fix mode: 'import' | 'stub' | 'both' */
+    autoFixMode?: 'import' | 'stub' | 'both';
+}
+
+/**
+ * Architecture artifacts generated during design phase.
+ */
+export interface ArchitectureArtifacts {
+    /** Class diagram in Mermaid format */
+    classDiagram: string;
+    /** Module dependency graph in Mermaid format */
+    dependencyGraph: string;
+    /** Sequence diagram for main flows */
+    sequenceDiagram?: string;
+    /** Data flow diagram */
+    dataFlowDiagram?: string;
+    /** Generated documentation path */
+    documentationPath: string;
+    /** Cross-boundary dependencies identified */
+    crossBoundaryDeps: CrossBoundaryDependency[];
+}
+
+/**
+ * Cross-boundary dependency (imports crossing module boundaries).
+ */
+export interface CrossBoundaryDependency {
+    /** Source module/directory */
+    sourceModule: string;
+    /** Target module/directory */
+    targetModule: string;
+    /** Import path */
+    importPath: string;
+    /** Number of usages */
+    usageCount: number;
+    /** List of methods/classes used */
+    usedSymbols: string[];
+}
+
+/**
+ * Library public API interface definition.
+ */
+export interface LibraryInterface {
+    /** Library name */
+    name: string;
+    /** Exported types */
+    types: TypeExport[];
+    /** Exported functions */
+    functions: FunctionExport[];
+    /** Exported classes */
+    classes: ClassExport[];
+    /** Re-exported modules */
+    reExports: string[];
+    /** Generated index.ts content */
+    indexContent: string;
+    /** Generated index.d.ts content */
+    dtsContent: string;
+}
+
+/**
+ * Type export definition.
+ */
+export interface TypeExport {
+    name: string;
+    kind: 'type' | 'interface' | 'enum';
+    sourceFile: string;
+    isPublic: boolean;
+}
+
+/**
+ * Function export definition.
+ */
+export interface FunctionExport {
+    name: string;
+    signature: string;
+    sourceFile: string;
+    isAsync: boolean;
+    isPublic: boolean;
+}
+
+/**
+ * Class export definition.
+ */
+export interface ClassExport {
+    name: string;
+    methods: string[];
+    sourceFile: string;
+    isPublic: boolean;
+}
+
+/**
+ * Generated test case from trace data.
+ */
+export interface GeneratedTestCase {
+    /** Test name/description */
+    name: string;
+    /** Test file path */
+    filePath: string;
+    /** Module being tested */
+    module: string;
+    /** Method being tested */
+    method: string;
+    /** Test inputs (from trace) */
+    inputs: unknown[];
+    /** Expected output (from trace) */
+    expectedOutput: unknown;
+    /** Test code content */
+    content: string;
+    /** Source trace entry */
+    sourceTrace?: TraceEntry;
+}
+
+/**
+ * Test suite generated from trace data.
+ */
+export interface GeneratedTestSuite {
+    /** Suite name */
+    name: string;
+    /** Test file path */
+    filePath: string;
+    /** Test cases */
+    testCases: GeneratedTestCase[];
+    /** Full test file content */
+    content: string;
+    /** Coverage statistics */
+    coverage: {
+        modules: number;
+        methods: number;
+        assertions: number;
+    };
+}
+
+/**
+ * Fix attempt during iterative loop.
+ */
+export interface FixAttempt {
+    /** Iteration number */
+    iteration: number;
+    /** Error being fixed */
+    error: MigrationError;
+    /** Fix strategy applied */
+    strategy: 'add-import' | 'generate-stub' | 'refactor-path' | 'add-file' | 'manual';
+    /** Action taken */
+    action: string;
+    /** Whether fix was successful */
+    success: boolean;
+    /** Resulting new errors (if any) */
+    newErrors?: MigrationError[];
+}
+
+/**
+ * Result of the iterative fix loop.
+ */
+export interface FixLoopResult {
+    /** Whether all errors were resolved */
+    allResolved: boolean;
+    /** Number of iterations performed */
+    iterations: number;
+    /** Fix attempts made */
+    attempts: FixAttempt[];
+    /** Remaining unresolved errors */
+    remainingErrors: MigrationError[];
+    /** Files added during fixing */
+    addedFiles: string[];
+    /** Stubs generated during fixing */
+    generatedStubs: string[];
+}
+
+/**
+ * v3.0 Complete extraction result with design artifacts.
+ */
+export interface DesignDrivenResult extends MigrationResult {
+    /** Architecture artifacts generated */
+    architecture?: ArchitectureArtifacts;
+    /** Library public interface */
+    libraryInterface?: LibraryInterface;
+    /** Generated test suite */
+    testSuite?: GeneratedTestSuite;
+    /** Fix loop result */
+    fixLoopResult?: FixLoopResult;
+    /** Phase durations for metrics */
+    phaseDurations: {
+        analysis: number;
+        design: number;
+        extraction: number;
+        verification: number;
+        total: number;
+    };
 }

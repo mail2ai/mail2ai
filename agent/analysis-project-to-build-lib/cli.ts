@@ -30,6 +30,13 @@ program
     .option('--trace-timeout <ms>', 'Maximum time for tracing (default: 30000ms)', parseInt)
     .option('--spy-modules <modules...>', 'Specific modules to spy on during tracing')
     .option('--verify', 'Re-run scenarios after extraction to verify behavior matches')
+    // v3.0 Design-Driven options
+    .option('--design-driven', 'Enable v3.0 design-driven closed-loop refactoring')
+    .option('--no-diagrams', 'Skip architecture diagram generation')
+    .option('--no-tests', 'Skip test generation from trace data')
+    .option('--no-fix-loop', 'Skip iterative fix loop')
+    .option('--max-fix-iterations <n>', 'Maximum fix loop iterations (default: 10)', parseInt)
+    .option('--auto-fix-mode <mode>', 'Auto-fix mode: import, stub, or both (default: both)')
     .option('--model <model>', 'AI model to use', 'gpt-5-mini')
     .option('--verbose', 'Enable verbose logging', true)
     .option('--save-logs', 'Save stage logs for optimization', true)
@@ -38,6 +45,9 @@ program
         const startTime = Date.now();
         
         console.log(chalk.blue.bold('\n🤖 Analysis Agent - Module Extraction'));
+        if (options.designDriven) {
+            console.log(chalk.cyan.bold('   🏗️  v3.0 Design-Driven Mode'));
+        }
         if (options.trace) {
             console.log(chalk.magenta.bold('   🧬 T-DAERA Mode: Dynamic Tracing Enabled'));
         }
@@ -75,6 +85,16 @@ program
             spyModules: options.spyModules
         } : undefined;
 
+        // Build v3.0 Design-Driven config
+        const designDrivenConfig = options.designDriven ? {
+            enabled: true,
+            generateDiagrams: options.diagrams !== false,
+            generateTests: options.tests !== false,
+            iterativeFixLoop: options.fixLoop !== false,
+            maxFixIterations: options.maxFixIterations || 10,
+            autoFixMode: options.autoFixMode || 'both'
+        } : undefined;
+
         const input: AnalysisInput = {
             projectPath: projectPath,
             moduleDescription: options.module,
@@ -87,7 +107,9 @@ program
             generateStubs: options.generateStubs,
             // T-DAERA fields
             tracing: tracingConfig,
-            verify: options.verify
+            verify: options.verify,
+            // v3.0 Design-Driven fields
+            designDriven: designDrivenConfig
         };
 
         // Log entry files (preferred) or directories
@@ -124,6 +146,20 @@ program
             }
             if (options.verify) {
                 console.log(chalk.magenta(`  Verification: enabled`));
+            }
+        }
+
+        // Log v3.0 Design-Driven options
+        if (options.designDriven) {
+            console.log(chalk.cyan(`v3.0 Design-Driven mode: enabled`));
+            console.log(chalk.cyan(`  Architecture diagrams: ${options.diagrams !== false ? 'enabled' : 'disabled'}`));
+            console.log(chalk.cyan(`  Test generation: ${options.tests !== false ? 'enabled' : 'disabled'}`));
+            console.log(chalk.cyan(`  Iterative fix loop: ${options.fixLoop !== false ? 'enabled' : 'disabled'}`));
+            if (options.maxFixIterations) {
+                console.log(chalk.cyan(`  Max fix iterations: ${options.maxFixIterations}`));
+            }
+            if (options.autoFixMode) {
+                console.log(chalk.cyan(`  Auto-fix mode: ${options.autoFixMode}`));
             }
         }
 

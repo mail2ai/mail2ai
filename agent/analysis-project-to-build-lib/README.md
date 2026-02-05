@@ -2,6 +2,36 @@
 
 An AI-powered agent using `@github/copilot-sdk` that analyzes TypeScript projects and extracts modules into independent, reusable libraries.
 
+## 🏗️ v3.0: Design-Driven Closed-Loop Refactoring
+
+This agent now includes **v3.0 Design-Driven Closed-Loop Refactoring**, which builds upon T-DAERA:
+
+- **Architecture First**: Generates Mermaid diagrams before extraction (class, dependency, data flow)
+- **Entry-First Strategy**: Defines public API before refactoring
+- **Test Generation**: Auto-generates Jest/Vitest tests from trace data
+- **Iterative Fix Loop**: Automatically fixes build errors by adding files or generating stubs
+- **Closed-Loop Verification**: Re-runs scenarios to verify extracted library
+
+```bash
+# Enable v3.0 Design-Driven mode
+npx tsx agent/analysis-project-to-build-lib/cli.ts extract \
+    -p /path/to/project \
+    -m "browser module" \
+    -e src/browser/server.ts \
+    --design-driven           # Enable v3.0 mode
+    --trace                   # Enable T-DAERA tracing
+    --verify                  # Verify after extraction
+```
+
+### v3.0 Generated Artifacts
+
+- `docs/ARCHITECTURE.md` - Mermaid diagrams (class, dependency, data flow)
+- `tests/auto-generated.spec.ts` - Test cases from trace data
+- `logs/fix-loop-report.md` - Iterative fix loop report
+- `EXTRACTION_REPORT.md` - Complete extraction summary
+
+---
+
 ## 🧬 T-DAERA Enhancement (v2.0)
 
 This agent now includes **T-DAERA (Trace-Driven Automated Extraction & Refactoring Architecture)**, which enables:
@@ -29,18 +59,22 @@ See [T-DAERA_PLAN.md](./T-DAERA_PLAN.md) for implementation details.
 
 This agent automates the process of:
 1. Analyzing project dependencies using `ts-morph`
-2. Identifying all internal files required for a module
-3. **[T-DAERA] Tracing runtime behavior to capture I/O mappings**
-4. Extracting and migrating code to a new library
-5. **[T-DAERA] Synthesizing smart stubs from trace data**
-6. Refactoring import paths (including path aliases)
-7. Generating package.json and tsconfig.json
-8. Validating the extracted library compiles correctly
-9. **[T-DAERA] Verifying behavior matches in new environment**
+2. **[v3.0] Generating architecture diagrams and public API definition**
+3. Identifying all internal files required for a module
+4. **[T-DAERA] Tracing runtime behavior to capture I/O mappings**
+5. Extracting and migrating code to a new library
+6. **[T-DAERA] Synthesizing smart stubs from trace data**
+7. Refactoring import paths (including path aliases)
+8. Generating package.json and tsconfig.json
+9. **[v3.0] Generating test cases from trace data**
+10. Validating the extracted library compiles correctly
+11. **[v3.0] Running iterative fix loop for build errors**
+12. **[T-DAERA] Verifying behavior matches in new environment**
 
 ## Features
 
 - **AI-Powered Orchestration**: Uses `@github/copilot-sdk` with gpt-5-mini (default) for intelligent workflow execution
+- **v3.0 Design-Driven Mode**: Architecture-first extraction with iterative fixing
 - **Automatic Fallback**: Falls back to direct skill execution when SDK is unavailable
 - **Comprehensive Logging**: Detailed logs with DEBUG/INFO/STEP/WARN/ERROR levels
 - **Report Generation**: Automatically generates extraction reports
@@ -59,6 +93,26 @@ const result = await runAnalysisAgent({
     moduleDescription: 'browser automation utilities',
     directories: ['src/browser'],
     outputLibName: 'browser-lib'
+});
+
+// With v3.0 Design-Driven mode
+const result = await runAnalysisAgent({
+    projectPath: '/path/to/project',
+    moduleDescription: 'browser server',
+    entryFiles: ['src/browser/server.ts'],
+    outputLibName: 'browser-lib',
+    tracing: {
+        enabled: true,
+        maxTraceTime: 30000
+    },
+    designDriven: {
+        enabled: true,
+        generateDiagrams: true,
+        generateTests: true,
+        iterativeFixLoop: true,
+        maxFixIterations: 10
+    },
+    verify: true
 });
 
 // With T-DAERA tracing enabled

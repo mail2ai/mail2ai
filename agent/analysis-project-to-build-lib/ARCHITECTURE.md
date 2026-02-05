@@ -1,5 +1,94 @@
 # Analysis Agent Architecture Documentation
 
+## v3.0 Enhancement: Design-Driven Closed-Loop Refactoring
+
+This architecture now includes **v3.0 Design-Driven Closed-Loop Refactoring**, which builds upon T-DAERA to add:
+
+### v3.0 Key Benefits
+
+1. **Architecture First**: Generates Mermaid diagrams before extraction - class diagrams, dependency graphs, data flow
+2. **Entry-First Strategy**: Defines public API before refactoring, ensuring all changes support the interface
+3. **Test Generation**: Creates Jest/Vitest tests automatically from trace data
+4. **Iterative Fix Loop**: Automatically fixes build errors by adding files or generating stubs
+5. **Closed-Loop Verification**: Re-runs scenarios to verify extracted library matches original behavior
+
+### v3.0 CLI Options
+
+```bash
+analysis-agent extract -p <project> -m "module" --design-driven    # Enable v3.0
+  --no-diagrams        # Skip architecture diagram generation
+  --no-tests           # Skip test generation from trace data  
+  --no-fix-loop        # Skip iterative fix loop
+  --max-fix-iterations <n>  # Max fix iterations (default: 10)
+  --auto-fix-mode <mode>    # import, stub, or both (default: both)
+```
+
+### v3.0 Process Flow
+
+```mermaid
+graph TD
+    subgraph Phase 1: Context Awareness
+    A[User Request: Extract Module] --> B[Static Analysis AST]
+    B --> C[T-DAERA Tracing - Runtime Values]
+    C --> D[Dependency Graph Construction]
+    end
+
+    subgraph Phase 2: Design Synthesis
+    D --> E{Architectural Generation}
+    E -->|Generate| F[Class/Sequence Diagrams - Mermaid]
+    E -->|Generate| G[Data Flow Graph]
+    E -->|Define| H[Target Library Interface - Public API]
+    end
+
+    subgraph Phase 3: Structural Transformation
+    H --> I[Raw Extraction - Copy Files]
+    I --> J[Entry Point Conversion]
+    J -->|Refactor| K[Resolve Internal Imports]
+    J -->|Shim/Stub| L[Synthesize Smart Stubs from Trace]
+    end
+
+    subgraph Phase 4: Verification Loop
+    L --> M[Generate Test Cases from Scenarios]
+    M --> N[Run Tests in Isolated Env]
+    N --> O{Pass?}
+    O -->|No| P[Analyze Logs & Auto-Fix]
+    P --> K
+    O -->|Yes| Q[Generate Final Report]
+    end
+```
+
+### v3.0 Data Flow
+
+```mermaid
+flowchart LR
+    Input[Source Code] --> Analyzer
+    Scenario[Test Scenarios] --> Tracer[T-DAERA Tracer]
+    
+    Analyzer --> AST
+    Analyzer --> DepGraph[Dependency Graph]
+    
+    Tracer --> TraceLog[Runtime Values & Calls]
+    
+    subgraph Synthesis Engine
+        AST & DepGraph & TraceLog --> Architect[Design Generator]
+        Architect --> Diagrams[Mermaid Diagrams]
+        Architect --> LibInterface[Library Public API Definition]
+        
+        TraceLog --> TestGen[Test Case Generator]
+        TestGen --> SpecFiles[Jest/Vitest Specs]
+        
+        TraceLog --> StubGen[Smart Stub Generator]
+        StubGen --> Stubs[Mock Implementations]
+    end
+    
+    LibInterface --> Refactorer
+    SpecFiles & Stubs --> Verifier[Test Runner]
+    
+    Verifier --> Report[Final Extraction Report]
+```
+
+---
+
 ## T-DAERA Enhancement (v2.0)
 
 This architecture now includes **T-DAERA (Trace-Driven Automated Extraction & Refactoring Architecture)**, which adds dynamic tracing capabilities for generating smart stubs with actual runtime values.
@@ -389,165 +478,6 @@ analysis-agent extract -p <project> -m "module" --trace    # Enable tracing
 │  8. Missing ../cli/* imports         1       Focus limited to src/browser   │
 │                                                                             │
 │  9. Missing ../utils/* imports       2       Focus limited to src/browser   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## 5. Solution Approaches
-
-### 5.1 Solution A: Auto-include Required Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   SOLUTION A: SMART DEPENDENCY INCLUSION                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Strategy: Automatically include all referenced files regardless of        │
-│             focus directories, but mark external deps for shimming          │
-│                                                                             │
-│   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │  NEW: collectAllDependencies(entryFile)                              │  │
-│   │       │                                                              │  │
-│   │       ├── Traverse ALL imports (no focus restriction)                │  │
-│   │       ├── Classify as: CORE (in focus) vs SUPPORT (outside focus)   │  │
-│   │       └── Include SUPPORT files with minimal changes                 │  │
-│   └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│   Pros: ✅ Complete extraction, no broken imports                          │
-│   Cons: ❌ May include too many files, defeats purpose of focus            │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 5.2 Solution B: Generate Stubs for External Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   SOLUTION B: STUB GENERATION                               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Strategy: Generate stub files for missing dependencies                    │
-│                                                                             │
-│   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │  NEW: generateStubsForMissingDeps()                                  │  │
-│   │       │                                                              │  │
-│   │       ├── Identify missing imports after migration                   │  │
-│   │       ├── Analyze required exports from original files               │  │
-│   │       └── Generate stub files with proper types                      │  │
-│   └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│   Example:                                                                  │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  // stubs/config/config.ts                                          │   │
-│   │  export function loadConfig(): Config { return {} as Config; }      │   │
-│   │  export interface Config { browser?: BrowserConfig; }               │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│   Pros: ✅ Minimal extraction, builds pass                                 │
-│   Cons: ❌ Stubs need runtime implementation                               │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 5.3 Solution C: Dependency Adapter Pattern
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   SOLUTION C: ADAPTER INTERFACES                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Strategy: Create adapter interfaces and move deps to peer dependencies    │
-│                                                                             │
-│   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │  1. Identify external dependencies                                   │  │
-│   │  2. Create interface files for each dependency                       │  │
-│   │  3. Rewrite imports to use adapters                                  │  │
-│   │  4. Export factory functions for dependency injection                │  │
-│   └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│   Example:                                                                  │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  // adapters/types.ts                                               │   │
-│   │  export interface IConfigAdapter {                                  │   │
-│   │    loadConfig(): Config;                                            │   │
-│   │  }                                                                  │   │
-│   │  export interface ILoggerAdapter {                                  │   │
-│   │    createSubsystemLogger(name: string): Logger;                     │   │
-│   │  }                                                                  │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│   Pros: ✅ Clean architecture, testable, flexible                          │
-│   Cons: ❌ Significant refactoring required                                │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 5.4 Solution D: Extended Focus Directories (Recommended)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│             SOLUTION D: EXTENDED FOCUS WITH DEPENDENCY ANALYSIS             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Strategy: Analyze missing deps and suggest additional focus dirs          │
-│                                                                             │
-│   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │  Phase 1: Initial Analysis                                           │  │
-│   │  ┌────────────────────────────────────────────────────────────────┐  │  │
-│   │  │ Analyze entry files with focus directories                     │  │  │
-│   │  │ Collect all missing import paths                               │  │  │
-│   │  │ Group missing imports by directory                             │  │  │
-│   │  └────────────────────────────────────────────────────────────────┘  │  │
-│   │                                                                      │  │
-│   │  Phase 2: Dependency Mapping                                         │  │
-│   │  ┌────────────────────────────────────────────────────────────────┐  │  │
-│   │  │ Map: ../config/* → src/config (12 refs)                        │  │  │
-│   │  │ Map: ../logging/* → src/logging (5 refs)                       │  │  │
-│   │  │ Map: ../infra/* → src/infra (4 refs)                           │  │  │
-│   │  │ Map: ./pw-ai.js → src/browser/pw-ai.ts (5 refs)                │  │  │
-│   │  └────────────────────────────────────────────────────────────────┘  │  │
-│   │                                                                      │  │
-│   │  Phase 3: Auto-suggest or Auto-include                               │  │
-│   │  ┌────────────────────────────────────────────────────────────────┐  │  │
-│   │  │ Option A: Prompt user with suggestions                         │  │  │
-│   │  │ Option B: Auto-include if refs > threshold                     │  │  │
-│   │  │ Option C: Generate minimal stubs for low-ref deps              │  │  │
-│   │  └────────────────────────────────────────────────────────────────┘  │  │
-│   └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│   Pros: ✅ Balanced approach, user control, complete extraction            │
-│   Cons: ❌ More complex implementation                                     │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## 6. Recommended Implementation Plan
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      IMPLEMENTATION PHASES                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Phase 1: Missing Dependency Detection                                     │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │ 1. After collectDependencies, identify unresolved imports          │   │
-│   │ 2. Group by source directory (../config, ../logging, etc.)         │   │
-│   │ 3. Report missing deps with file counts                            │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│   Phase 2: Auto-Include Critical Dependencies                               │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │ 1. Add --include-deps flag to CLI                                  │   │
-│   │ 2. Expand focus dirs to include required dependencies              │   │
-│   │ 3. Re-run analysis with expanded focus                             │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│   Phase 3: Stub Generation for Remaining                                    │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │ 1. For deps that can't be included, generate stubs                 │   │
-│   │ 2. Create adapters/ directory with type definitions                │   │
-│   │ 3. Rewrite imports to use local stubs                              │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

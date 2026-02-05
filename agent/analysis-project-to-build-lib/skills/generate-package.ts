@@ -8,6 +8,23 @@ interface PackageJsonResult {
     error?: string;
 }
 
+// Packages that need @types/* declarations
+const PACKAGES_NEEDING_TYPES = new Set([
+    'ws',
+    'express',
+    'node',
+    'lodash',
+    'debug',
+    'cors',
+    'body-parser',
+    'compression',
+    'cookie-parser',
+    'morgan',
+    'multer',
+    'cheerio',
+    'glob'
+]);
+
 export async function generateLibPackageJson(
     libPath: string,
     libName: string,
@@ -18,6 +35,7 @@ export async function generateLibPackageJson(
     try {
         // Read existing package.json if it exists to get dependency versions
         let existingDeps: Record<string, string> = {};
+        let existingDevDeps: Record<string, string> = {};
         const rootPackageJson = path.resolve(libPath, '../../package.json');
         if (fs.existsSync(rootPackageJson)) {
             const rootPkg = JSON.parse(fs.readFileSync(rootPackageJson, 'utf-8'));
@@ -25,6 +43,7 @@ export async function generateLibPackageJson(
                 ...rootPkg.dependencies,
                 ...rootPkg.devDependencies
             };
+            existingDevDeps = rootPkg.devDependencies || {};
         }
 
         // Known optional dependencies that should be marked as optional
@@ -44,6 +63,10 @@ export async function generateLibPackageJson(
         const dependencies: Record<string, string> = {};
         const peerDependencies: Record<string, string> = {};
         const optionalDependencies: Record<string, string> = {};
+        const devDependencies: Record<string, string> = {
+            typescript: '^5.0.0',
+            '@types/node': '^20.0.0'
+        };
 
         for (const dep of externalDeps || []) {
             // Skip Node.js built-in modules (node:* prefix)
@@ -62,6 +85,14 @@ export async function generateLibPackageJson(
                 optionalDependencies[dep] = version;
             } else {
                 dependencies[dep] = version;
+            }
+            
+            // Add @types package if needed
+            const baseDep = dep.startsWith('@') ? dep : dep.split('/')[0];
+            if (PACKAGES_NEEDING_TYPES.has(baseDep)) {
+                const typesPackage = `@types/${baseDep}`;
+                const typesVersion = existingDevDeps[typesPackage] || existingDeps[typesPackage] || '*';
+                devDependencies[typesPackage] = typesVersion;
             }
         }
 
@@ -90,9 +121,7 @@ export async function generateLibPackageJson(
             dependencies,
             peerDependencies,
             optionalDependencies,
-            devDependencies: {
-                typescript: '^5.0.0'
-            }
+            devDependencies
         };
 
         await fs.promises.writeFile(
@@ -126,10 +155,10 @@ async function createLibTsConfig(libPath: string): Promise<void> {
             target: 'ES2022',
             module: 'NodeNext',
             moduleResolution: 'NodeNext',
-            lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+            lib: ['ES2023', 'DOM', 'DOM.Iterable', 'ScriptHost'],
             outDir: './dist',
             rootDir: './src',
-            strict: false,
+            strict: true,  // Match source project strict mode
             esModuleInterop: true,
             skipLibCheck: true,
             forceConsistentCasingInFileNames: true,
@@ -137,8 +166,8 @@ async function createLibTsConfig(libPath: string): Promise<void> {
             declaration: true,
             declarationMap: true,
             sourceMap: true,
-            noImplicitAny: false,
             allowImportingTsExtensions: true,
+            allowSyntheticDefaultImports: true,
             noEmit: true
         },
         include: ['src/**/*'],
