@@ -1,5 +1,28 @@
 # Analysis Agent Architecture Documentation
 
+## T-DAERA Enhancement (v2.0)
+
+This architecture now includes **T-DAERA (Trace-Driven Automated Extraction & Refactoring Architecture)**, which adds dynamic tracing capabilities for generating smart stubs with actual runtime values.
+
+### T-DAERA Key Benefits
+
+1. **Smart Stubs**: Generated stubs contain actual recorded return values, not just "throw Error"
+2. **Behavior Recording**: Captures real I/O mappings during test execution
+3. **Precision Pruning**: Only includes methods that were actually called
+4. **Verification**: Re-runs scenarios in new environment to validate extraction
+
+### T-DAERA CLI Options
+
+```bash
+analysis-agent extract -p <project> -m "module" --trace    # Enable tracing
+  --scenario <path>     # Custom test scenario file
+  --trace-timeout <ms>  # Timeout for tracing (default: 30000)
+  --spy-modules <mods>  # Specific modules to spy on
+  --verify              # Verify after extraction
+```
+
+---
+
 ## 1. System Architecture Overview
 
 ```
@@ -8,6 +31,9 @@
 │                              (cli.ts)                                       │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
 │  │ -p project  │  │ -m module   │  │ -e entry    │  │ -f focus / --depth  │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │  --trace    │  │ --scenario  │  │  --verify   │  │ T-DAERA Options     │ │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
@@ -18,7 +44,7 @@
 │  │                         AnalysisAgent Class                            │ │
 │  │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐  │ │
 │  │  │     Logger       │    │   AgentConfig    │    │  SkillContext    │  │ │
-│  │  │   (logger.ts)    │    │  (model, temp)   │    │ (state holder)   │  │ │
+│  │  │   (logger.ts)    │    │  (model, temp)   │    │ (+ traceLog)     │  │ │
 │  │  └──────────────────┘    └──────────────────┘    └──────────────────┘  │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -31,11 +57,14 @@
 │  ┌─────────────────────────┐  │   │                                       │
 │  │  CopilotClient          │  │   │   Sequential skill calls:             │
 │  │  CopilotSession         │  │   │   1. analyzeProjectDependencies       │
-│  │  Tool Definitions       │  │   │   2. extractAndMigrateCode            │
-│  └─────────────────────────┘  │   │   3. refactorImportPaths              │
-└───────────────────────────────┘   │   4. generateLibPackageJson           │
-                    │               │   5. buildAndValidateLib              │
-                    └───────────────┴───────────────────────────────────────┘
+│  │  Tool Definitions       │  │   │   1.5 [T-DAERA] runTracing            │
+│  └─────────────────────────┘  │   │   2. extractAndMigrateCode            │
+└───────────────────────────────┘   │   2.5 synthesizeSmartStubs            │
+                    │               │   3. refactorImportPaths              │
+                    └───────────────│   4. generateLibPackageJson           │
+                                    │   5. buildAndValidateLib              │
+                                    │   6. [T-DAERA] verify                 │
+                                    └───────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -44,10 +73,17 @@
 │  │ analyze-deps.ts │  │ migrate-code.ts │  │ refactor-paths.ts           │  │
 │  │  (ts-morph)     │  │  (fs.copy)      │  │ (import rewrite)            │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │
-│  ┌─────────────────┐  ┌─────────────────┐                                   │
-│  │ generate-pkg.ts │  │ build-validate  │                                   │
-│  │ (package.json)  │  │  (tsc check)    │                                   │
-│  └─────────────────┘  └─────────────────┘                                   │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │
+│  │ generate-pkg.ts │  │ build-validate  │  │ generate-stubs.ts           │  │
+│  │ (package.json)  │  │  (tsc check)    │  │ (static stubs)              │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │
+│                                                                             │
+│  T-DAERA Skills (NEW):                                                      │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │
+│  │ runtime-tracer  │  │ generate-       │  │ synthesize-stubs.ts         │  │
+│  │  (Proxy/Spy)    │  │ scenarios.ts    │  │ (smart stubs from trace)    │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -135,6 +171,105 @@
 │   │ migratedFiles: string[]                                            │    │
 │   │ errors: MigrationError[]                                           │    │
 │   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 2.5 T-DAERA: Dynamic Tracing Flow (NEW)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        T-DAERA TRACING PHASE                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   After Analysis, Before Migration (Step 1.5)                               │
+│                                                                             │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  1. Identify Modules to Spy                                          │  │
+│   │     ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐    │  │
+│   │     │ External    │ +  │ Missing     │ =  │ Spy Target List     │    │  │
+│   │     │ Dependencies│    │ Internal    │    │ (modules to trace)  │    │  │
+│   │     └─────────────┘    └─────────────┘    └─────────────────────┘    │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                         │                                   │
+│                                         ▼                                   │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  2. Generate Test Scenarios                                          │  │
+│   │     ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐    │  │
+│   │     │ Analyze     │───▶│ Detect      │───▶│ Generate            │    │  │
+│   │     │ Entry Point │    │ Type (srv/  │    │ Execute Commands    │    │  │
+│   │     │             │    │  cli/lib)   │    │                     │    │  │
+│   │     └─────────────┘    └─────────────┘    └─────────────────────┘    │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                         │                                   │
+│                                         ▼                                   │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  3. Execute with Spying (Proxy Injection)                            │  │
+│   │     ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐    │  │
+│   │     │ Generate    │───▶│ Run Test    │───▶│ Capture All         │    │  │
+│   │     │ Bootstrap   │    │ Scenarios   │    │ Function Calls      │    │  │
+│   │     │ (NODE_OPTS) │    │             │    │ + Return Values     │    │  │
+│   │     └─────────────┘    └─────────────┘    └─────────────────────┘    │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                         │                                   │
+│                                         ▼                                   │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  TraceLog Output                                                     │  │
+│   │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│   │  │ entries: [{ module, method, args, returnValue, duration }]     │  │  │
+│   │  │ callGraph: { caller -> [callees] }                             │  │  │
+│   │  │ stats: { totalCalls, uniqueMethods, errorCount }               │  │  │
+│   │  └────────────────────────────────────────────────────────────────┘  │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     T-DAERA SMART STUB SYNTHESIS                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   After Migration (Step 2.5) - Uses TraceLog instead of static analysis    │
+│                                                                             │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  Smart Return Value Generation                                       │  │
+│   │                                                                      │  │
+│   │  TraceLog:                        Generated Stub:                    │  │
+│   │  ┌───────────────────────┐        ┌────────────────────────────┐     │  │
+│   │  │ get("port") → 18792   │   →    │ if (arg === "port")        │     │  │
+│   │  │ get("env") → "prod"   │   →    │   return 18792;            │     │  │
+│   │  │ get("host") → "0.0.0" │   →    │ if (arg === "env")         │     │  │
+│   │  └───────────────────────┘        │   return "prod";           │     │  │
+│   │                                   │ // fallback for untraced   │     │  │
+│   │                                   │ console.warn(...);         │     │  │
+│   │                                   └────────────────────────────┘     │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  Stub Quality Markers                                                │  │
+│   │                                                                      │  │
+│   │  // [TRACED] - Method has recorded values                            │  │
+│   │  export function getConfig(key) { ... actual values ... }            │  │
+│   │                                                                      │  │
+│   │  // [FALLBACK] - Method was not called during tracing                │  │
+│   │  export function setConfig(key, val) { throw Error('Not traced'); }  │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     T-DAERA VERIFICATION (Optional)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   After Build (Step 6) - Re-runs scenarios in new environment              │
+│                                                                             │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │  1. Compile new library                                              │  │
+│   │  2. Execute same scenarios against compiled output                   │  │
+│   │  3. Compare behavior (should work with smart stubs)                  │  │
+│   │  4. Report: passed/failed scenarios                                  │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

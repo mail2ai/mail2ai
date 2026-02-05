@@ -4,13 +4,21 @@
  * This agent uses the Copilot SDK to orchestrate the extraction workflow,
  * making intelligent decisions about which files to include and how to
  * structure the output library.
+ * 
+ * T-DAERA Enhancement: Supports dynamic tracing for smart stub generation.
  */
 
-import type { AnalysisInput, MigrationResult, AnalysisResult, SkillContext } from './types.js';
+import type { AnalysisInput, MigrationResult, AnalysisResult, SkillContext, TraceLog, TestScenario } from './types.js';
 import type { CopilotClient, CopilotSession, defineTool } from '@github/copilot-sdk';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Logger, LogLevel } from './logger.js';
+
+// Helper to load custom scenarios
+async function loadCustomScenarios(scenarioPath: string): Promise<TestScenario[]> {
+    const { loadCustomScenarios: load } = await import('./skills/generate-scenarios.js');
+    return load(scenarioPath);
+}
 
 // Type for the SDK module
 type CopilotSDKType = {
@@ -40,7 +48,15 @@ const loadSkills = async () => ({
     refactorImportPaths: (await import('./skills/refactor-paths.js')).refactorImportPaths,
     generateLibPackageJson: (await import('./skills/generate-package.js')).generateLibPackageJson,
     buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib,
-    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs
+    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs,
+    // T-DAERA skills
+    generateScenarios: (await import('./skills/generate-scenarios.js')).generateAllScenarios,
+    analyzeEntryPoint: (await import('./skills/generate-scenarios.js')).analyzeEntryPoint,
+    createDefaultScenario: (await import('./skills/runtime-tracer.js')).createDefaultScenario,
+    identifyModulesToSpy: (await import('./skills/runtime-tracer.js')).identifyModulesToSpy,
+    runTracing: (await import('./skills/runtime-tracer.js')).runTracing,
+    mergeTraceLogs: (await import('./skills/runtime-tracer.js')).mergeTraceLogs,
+    synthesizeSmartStubs: (await import('./skills/synthesize-stubs.js')).synthesizeSmartStubs
 });
 
 export interface AgentTool {
@@ -497,6 +513,58 @@ Report any errors you encounter.`;
         // Save stage 1 log
         await this.logger.saveToFile(path.join(logsDir, 'stage1-analysis.log'));
 
+        // T-DAERA: Step 1.5 - Dynamic Tracing (if enabled)
+        let traceLog = null;
+        if (input.tracing?.enabled && analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            this.logger.step('Step 1.5: T-DAERA Dynamic Tracing...');
+            
+            try {
+                // Identify modules to spy on
+                const modulesToSpy = input.tracing.spyModules || skills.identifyModulesToSpy(analysisResult);
+                this.logger.info(`   Spying on ${modulesToSpy.length} modules`);
+                
+                // Generate or load test scenarios
+                const scenarios = input.tracing.testScenarioPath
+                    ? await loadCustomScenarios(input.tracing.testScenarioPath)
+                    : await skills.generateScenarios(analysisResult, input.projectPath);
+                
+                this.logger.info(`   Generated ${scenarios.length} test scenarios`);
+                
+                // Run tracing for each scenario
+                const traceLogs = [];
+                for (const scenario of scenarios) {
+                    this.logger.debug(`   Running scenario: ${scenario.name}`);
+                    try {
+                        const log = await skills.runTracing(
+                            input.projectPath,
+                            scenario,
+                            modulesToSpy,
+                            input.tracing
+                        );
+                        traceLogs.push(log);
+                        this.logger.debug(`     Captured ${log.entries.length} trace entries`);
+                    } catch (error) {
+                        this.logger.warn(`     Scenario ${scenario.name} failed:`, error);
+                    }
+                }
+                
+                // Merge all trace logs
+                if (traceLogs.length > 0) {
+                    traceLog = skills.mergeTraceLogs(traceLogs);
+                    this.context!.traceLog = traceLog;
+                    this.logger.info(`   Total: ${traceLog.stats.totalCalls} calls, ${traceLog.stats.uniqueMethods} methods`);
+                    
+                    // Save trace log
+                    const traceLogPath = path.join(logsDir, 'trace-log.json');
+                    await fs.promises.writeFile(traceLogPath, JSON.stringify(traceLog, null, 2));
+                }
+                
+                await this.logger.saveToFile(path.join(logsDir, 'stage1.5-tracing.log'));
+            } catch (error) {
+                this.logger.warn('   Tracing failed, falling back to static stubs:', error);
+            }
+        }
+
         // Step 2: Migrate code
         this.logger.step('Step 2: Migrating code files...');
         const migrationProgress = await skills.extractAndMigrateCode(analysisResult, outputPath);
@@ -505,11 +573,33 @@ Report any errors you encounter.`;
         // Save stage 2 log
         await this.logger.saveToFile(path.join(logsDir, 'stage2-migrate.log'));
 
-        // Step 2.5: Generate stubs for missing dependencies (if enabled)
-        if (input.generateStubs && analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
-            this.logger.step('Step 2.5: Generating stubs for missing dependencies...');
-            const stubResult = await skills.generateStubs(analysisResult, outputPath, input.projectPath);
-            this.logger.info(`   Generated ${stubResult.generatedFiles.length} stub files`);
+        // Step 2.5: Generate stubs for missing dependencies
+        if (analysisResult.missingDependencies && analysisResult.missingDependencies.length > 0) {
+            if (traceLog && traceLog.entries.length > 0) {
+                // T-DAERA: Use smart stubs from trace data
+                this.logger.step('Step 2.5: Synthesizing smart stubs from trace data (T-DAERA)...');
+                const stubResult = await skills.synthesizeSmartStubs(
+                    traceLog,
+                    analysisResult,
+                    outputPath,
+                    input.projectPath,
+                    {
+                        preserveTypes: true,
+                        generateWarnings: true,
+                        fallbackBehavior: 'warn',
+                        pruneUncalled: false
+                    }
+                );
+                this.logger.info(`   Generated ${stubResult.files.length} smart stubs`);
+                if (stubResult.warnings.length > 0) {
+                    this.logger.warn(`   ${stubResult.warnings.length} warnings during synthesis`);
+                }
+            } else if (input.generateStubs) {
+                // Fallback to static stubs
+                this.logger.step('Step 2.5: Generating static stubs for missing dependencies...');
+                const stubResult = await skills.generateStubs(analysisResult, outputPath, input.projectPath);
+                this.logger.info(`   Generated ${stubResult.generatedFiles.length} stub files`);
+            }
             
             // Save stub generation log
             await this.logger.saveToFile(path.join(logsDir, 'stage2.5-stubs.log'));
@@ -542,6 +632,56 @@ Report any errors you encounter.`;
         
         // Save final log
         await this.logger.saveToFile(path.join(logsDir, 'stage5-build.log'));
+
+        // T-DAERA: Step 6 - Verification (if enabled and tracing was performed)
+        if (input.verify && traceLog && traceLog.entries.length > 0) {
+            this.logger.step('Step 6: T-DAERA Verification...');
+            try {
+                // Re-run scenarios in the new environment to verify behavior matches
+                const scenarios = input.tracing?.testScenarioPath
+                    ? await loadCustomScenarios(input.tracing.testScenarioPath)
+                    : await skills.generateScenarios(analysisResult, outputPath);
+                
+                let passed = 0;
+                let failed = 0;
+                
+                for (const scenario of scenarios) {
+                    this.logger.debug(`   Verifying scenario: ${scenario.name}`);
+                    try {
+                        // Adjust scenario paths for new location
+                        const adjustedScenario = {
+                            ...scenario,
+                            entryFile: scenario.entryFile.replace(/^src\//, 'dist/').replace(/\.tsx?$/, '.js')
+                        };
+                        
+                        await skills.runTracing(
+                            outputPath,
+                            adjustedScenario,
+                            [], // No spying needed for verification
+                            { enabled: true, maxTraceTime: input.tracing?.maxTraceTime || 10000 }
+                        );
+                        passed++;
+                        this.logger.debug(`     ✓ ${scenario.name}`);
+                    } catch (error) {
+                        failed++;
+                        this.logger.warn(`     ✗ ${scenario.name}:`, error);
+                    }
+                }
+                
+                this.logger.info(`   Verification: ${passed} passed, ${failed} failed`);
+                await this.logger.saveToFile(path.join(logsDir, 'stage6-verify.log'));
+                
+                if (failed > 0) {
+                    buildResult.errors.push({
+                        file: 'verification',
+                        error: `${failed} scenario(s) failed verification`,
+                        phase: 'build'
+                    });
+                }
+            } catch (error) {
+                this.logger.warn('   Verification failed:', error);
+            }
+        }
 
         return buildResult;
     }

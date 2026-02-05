@@ -4,6 +4,8 @@
  * This agent uses ts-morph for code analysis and integrates with
  * @github/copilot-sdk for AI-assisted decision making.
  * 
+ * T-DAERA Enhancement: Supports dynamic tracing for smart stub generation.
+ * 
  * Default model: gpt-5-mini
  */
 
@@ -13,7 +15,15 @@ import type {
     AnalysisInput,
     AnalysisResult,
     MigrationResult,
-    SkillContext
+    SkillContext,
+    // T-DAERA types
+    TracingConfig,
+    TraceLog,
+    TraceEntry,
+    TestScenario,
+    SmartStubConfig,
+    StubSynthesisResult,
+    VerificationResult
 } from './types.js';
 import { AnalysisAgent, type AgentConfig } from './agent.js';
 import { Logger, LogLevel } from './logger.js';
@@ -22,6 +32,17 @@ import { Logger, LogLevel } from './logger.js';
 export { AnalysisAgent, Logger, LogLevel };
 export type { AgentConfig };
 
+// Re-export T-DAERA types
+export type {
+    TracingConfig,
+    TraceLog,
+    TraceEntry,
+    TestScenario,
+    SmartStubConfig,
+    StubSynthesisResult,
+    VerificationResult
+};
+
 // Dynamic imports for skills to handle .ts/.js resolution
 const loadSkills = async () => ({
     analyzeProjectDependencies: (await import('./skills/analyze-dependencies.js')).analyzeProjectDependencies,
@@ -29,7 +50,11 @@ const loadSkills = async () => ({
     refactorImportPaths: (await import('./skills/refactor-paths.js')).refactorImportPaths,
     generateLibPackageJson: (await import('./skills/generate-package.js')).generateLibPackageJson,
     buildAndValidateLib: (await import('./skills/build-validate.js')).buildAndValidateLib,
-    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs
+    generateStubs: (await import('./skills/generate-stubs.js')).generateStubs,
+    // T-DAERA skills
+    generateScenarios: (await import('./skills/generate-scenarios.js')).generateAllScenarios,
+    runTracing: (await import('./skills/runtime-tracer.js')).runTracing,
+    synthesizeSmartStubs: (await import('./skills/synthesize-stubs.js')).synthesizeSmartStubs
 });
 
 const SKILLS_DIR = path.join(import.meta.dirname, 'skills');

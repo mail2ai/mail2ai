@@ -2,15 +2,41 @@
 
 An AI-powered agent using `@github/copilot-sdk` that analyzes TypeScript projects and extracts modules into independent, reusable libraries.
 
+## 🧬 T-DAERA Enhancement (v2.0)
+
+This agent now includes **T-DAERA (Trace-Driven Automated Extraction & Refactoring Architecture)**, which enables:
+
+- **Smart Stubs**: Generate stubs with actual runtime values instead of `throw Error`
+- **Dynamic Tracing**: Capture real I/O mappings during test execution
+- **Precision Pruning**: Only include methods that were actually called
+- **Verification**: Re-run scenarios to validate extraction correctness
+
+```bash
+# Enable T-DAERA mode with --trace
+npx tsx agent/analysis-project-to-build-lib/cli.ts extract \
+    -p /path/to/project \
+    -m "browser module" \
+    -e src/browser/server.ts \
+    --trace                    # Enable dynamic tracing
+    --verify                   # Verify after extraction
+```
+
+See [T-DAERA_PLAN.md](./T-DAERA_PLAN.md) for implementation details.
+
+---
+
 ## Overview
 
 This agent automates the process of:
 1. Analyzing project dependencies using `ts-morph`
 2. Identifying all internal files required for a module
-3. Extracting and migrating code to a new library
-4. Refactoring import paths (including path aliases)
-5. Generating package.json and tsconfig.json
-6. Validating the extracted library compiles correctly
+3. **[T-DAERA] Tracing runtime behavior to capture I/O mappings**
+4. Extracting and migrating code to a new library
+5. **[T-DAERA] Synthesizing smart stubs from trace data**
+6. Refactoring import paths (including path aliases)
+7. Generating package.json and tsconfig.json
+8. Validating the extracted library compiles correctly
+9. **[T-DAERA] Verifying behavior matches in new environment**
 
 ## Features
 
@@ -18,6 +44,7 @@ This agent automates the process of:
 - **Automatic Fallback**: Falls back to direct skill execution when SDK is unavailable
 - **Comprehensive Logging**: Detailed logs with DEBUG/INFO/STEP/WARN/ERROR levels
 - **Report Generation**: Automatically generates extraction reports
+- **T-DAERA Tracing**: Dynamic behavior recording for smart stub generation
 
 ## Usage
 
@@ -32,6 +59,19 @@ const result = await runAnalysisAgent({
     moduleDescription: 'browser automation utilities',
     directories: ['src/browser'],
     outputLibName: 'browser-lib'
+});
+
+// With T-DAERA tracing enabled
+const result = await runAnalysisAgent({
+    projectPath: '/path/to/project',
+    moduleDescription: 'browser server',
+    entryFiles: ['src/browser/server.ts'],
+    outputLibName: 'browser-lib',
+    tracing: {
+        enabled: true,
+        maxTraceTime: 30000
+    },
+    verify: true
 });
 
 // With agent configuration
@@ -71,6 +111,16 @@ npx tsx agent/analysis-project-to-build-lib/cli.ts extract \
     -d src/browser assets/chrome-extension \
     -n browser-lib \
     --model gpt-5-mini
+
+# With T-DAERA dynamic tracing
+npx tsx agent/analysis-project-to-build-lib/cli.ts extract \
+    -p projects/openclaw \
+    -m "browser server" \
+    -e src/browser/server.ts \
+    -n browser-lib \
+    --trace \
+    --trace-timeout 60000 \
+    --verify
 ```
 
 ### CLI Options
@@ -84,6 +134,12 @@ npx tsx agent/analysis-project-to-build-lib/cli.ts extract \
 | `-d, --directories <dirs...>` | Directories to search (relative to project) |
 | `--model <model>` | AI model to use (default: gpt-5-mini) |
 | `--verbose` | Enable verbose logging (default: true) |
+| **T-DAERA Options** | |
+| `--trace` | Enable dynamic tracing for smart stubs |
+| `--scenario <path>` | Path to custom test scenario file (JSON) |
+| `--trace-timeout <ms>` | Max tracing time (default: 30000) |
+| `--spy-modules <modules>` | Specific modules to spy on |
+| `--verify` | Re-run scenarios after extraction |
 
 ## Skills
 
@@ -107,6 +163,23 @@ Creates package.json and tsconfig.json with correct configuration.
 ### 5. Build and Validate
 Runs TypeScript compilation to verify the library works.
 
+### T-DAERA Skills (NEW)
+
+#### 6. Generate Scenarios (`generate-scenarios.ts`)
+Analyzes entry points to detect type (server/CLI/library) and generates appropriate test commands.
+
+#### 7. Runtime Tracer (`runtime-tracer.ts`)
+Creates Proxy wrappers to intercept function calls, recording all I/O mappings:
+- Injects bootstrap via NODE_OPTIONS
+- Captures args, return values, errors, timing
+- Builds call graph
+
+#### 8. Synthesize Stubs (`synthesize-stubs.ts`)
+Generates smart stubs from trace data:
+- Creates conditional return logic based on recorded args
+- Marks methods as [TRACED] or [FALLBACK]
+- Preserves TypeScript types from original
+
 ## Output
 
 The extracted library is placed in `{project_root}/../libs/{libName}` with structure:
@@ -121,6 +194,39 @@ libs/
       email/
         emailService.ts
         ...
+      stubs/           # T-DAERA smart stubs
+        config/
+          config.ts    # Contains [TRACED] methods with real values
+        logging/
+          logger.ts
+    logs/
+      trace-log.json   # T-DAERA trace data
+```
+
+## T-DAERA: Understanding Smart Stubs
+
+Traditional stubs throw errors and require manual implementation:
+
+```typescript
+// Old static stub
+export function getConfig(key: string): any {
+    throw new Error('Stub not implemented');
+}
+```
+
+T-DAERA smart stubs contain actual recorded values:
+
+```typescript
+// Smart stub from T-DAERA tracing
+export function getConfig(key: string): any {
+    // [TRACED] - Values recorded from runtime
+    if (JSON.stringify([arguments[0]]) === '["port"]') return 18792;
+    if (JSON.stringify([arguments[0]]) === '["env"]') return "production";
+    if (JSON.stringify([arguments[0]]) === '["host"]') return "0.0.0.0";
+    // Fallback for untraced calls
+    console.warn('[T-DAERA Stub] Untraced call:', arguments);
+    return 18792;
+}
 ```
 
 ## Dependencies

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runAnalysisAgent, AnalysisAgent, type AnalysisInput, type AgentConfig } from './index.js';
+import { runAnalysisAgent, AnalysisAgent, type AnalysisInput, type AgentConfig, type TracingConfig } from './index.js';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import * as path from 'path';
@@ -24,6 +24,12 @@ program
     .option('--max-depth <depth>', 'Maximum depth for dependency traversal (use 0 for shallow, 1 for one level)', parseInt)
     .option('--include-deps', 'Automatically include all required dependencies (ignores focus restrictions)')
     .option('--generate-stubs', 'Generate stub files for missing external dependencies')
+    // T-DAERA options
+    .option('--trace', 'Enable T-DAERA dynamic tracing for smart stub generation')
+    .option('--scenario <path>', 'Path to custom test scenario file (JSON)')
+    .option('--trace-timeout <ms>', 'Maximum time for tracing (default: 30000ms)', parseInt)
+    .option('--spy-modules <modules...>', 'Specific modules to spy on during tracing')
+    .option('--verify', 'Re-run scenarios after extraction to verify behavior matches')
     .option('--model <model>', 'AI model to use', 'gpt-5-mini')
     .option('--verbose', 'Enable verbose logging', true)
     .option('--save-logs', 'Save stage logs for optimization', true)
@@ -32,6 +38,9 @@ program
         const startTime = Date.now();
         
         console.log(chalk.blue.bold('\n🤖 Analysis Agent - Module Extraction'));
+        if (options.trace) {
+            console.log(chalk.magenta.bold('   🧬 T-DAERA Mode: Dynamic Tracing Enabled'));
+        }
         console.log(chalk.blue('═'.repeat(50)));
         console.log(chalk.gray(`Model: ${options.model}`));
         console.log(chalk.gray(`Project: ${options.project}`));
@@ -58,6 +67,14 @@ program
             }
         }
 
+        // Build T-DAERA tracing config
+        const tracingConfig: TracingConfig | undefined = options.trace ? {
+            enabled: true,
+            testScenarioPath: options.scenario,
+            maxTraceTime: options.traceTimeout || 30000,
+            spyModules: options.spyModules
+        } : undefined;
+
         const input: AnalysisInput = {
             projectPath: projectPath,
             moduleDescription: options.module,
@@ -67,7 +84,10 @@ program
             focusDirectories: options.focus,
             maxDepth: options.maxDepth,
             includeDeps: options.includeDeps,
-            generateStubs: options.generateStubs
+            generateStubs: options.generateStubs,
+            // T-DAERA fields
+            tracing: tracingConfig,
+            verify: options.verify
         };
 
         // Log entry files (preferred) or directories
@@ -92,6 +112,20 @@ program
         if (options.generateStubs) {
             console.log(chalk.cyan(`Generate stubs: enabled`));
         }
+        
+        // Log T-DAERA options
+        if (options.trace) {
+            console.log(chalk.magenta(`T-DAERA tracing: enabled`));
+            if (options.scenario) {
+                console.log(chalk.magenta(`  Scenario file: ${options.scenario}`));
+            }
+            if (options.traceTimeout) {
+                console.log(chalk.magenta(`  Trace timeout: ${options.traceTimeout}ms`));
+            }
+            if (options.verify) {
+                console.log(chalk.magenta(`  Verification: enabled`));
+            }
+        }
 
         const agentConfig: AgentConfig = {
             model: options.model,
@@ -109,6 +143,9 @@ program
             
             if (result.success) {
                 console.log(chalk.green.bold('\n✅ Module extraction completed successfully!'));
+                if (options.trace) {
+                    console.log(chalk.magenta('   🧬 Smart stubs generated from runtime traces'));
+                }
                 console.log(chalk.cyan(`📁 Library created at: ${result.libPath}`));
                 console.log(chalk.gray(`📊 Files migrated: ${result.migratedFiles.length}`));
                 console.log(chalk.gray(`⏱️  Duration: ${duration}s`));
@@ -133,7 +170,7 @@ program
 
             // Generate and save report
             const reportPath = path.join(result.libPath, 'EXTRACTION_REPORT.md');
-            await generateReport(result, input, duration, reportPath);
+            await generateReport(result, input, duration, reportPath, options.trace);
             console.log(chalk.gray(`\n📝 Report saved to: ${reportPath}`));
 
         } catch (error) {
@@ -146,7 +183,8 @@ async function generateReport(
     result: Awaited<ReturnType<typeof runAnalysisAgent>>,
     input: AnalysisInput,
     duration: string,
-    reportPath: string
+    reportPath: string,
+    tracingEnabled?: boolean
 ): Promise<void> {
     const fs = await import('fs');
     
@@ -158,6 +196,7 @@ async function generateReport(
 - **Duration**: ${duration}s
 - **Files Migrated**: ${result.migratedFiles.length}
 - **Library Path**: ${result.libPath}
+${tracingEnabled ? '- **T-DAERA Mode**: 🧬 Dynamic Tracing Enabled' : ''}
 
 ## Input Configuration
 
@@ -166,6 +205,15 @@ async function generateReport(
 - **Directories**: ${input.directories?.join(', ') || 'Auto-detected'}
 - **Entry Files**: ${input.entryFiles?.join(', ') || 'Auto-detected'}
 - **Output Library Name**: ${input.outputLibName || 'Auto-generated'}
+${input.tracing?.enabled ? `
+### T-DAERA Configuration
+
+- **Tracing**: Enabled
+- **Scenario File**: ${input.tracing.testScenarioPath || 'Auto-generated'}
+- **Trace Timeout**: ${input.tracing.maxTraceTime || 30000}ms
+- **Spy Modules**: ${input.tracing.spyModules?.join(', ') || 'Auto-detected'}
+- **Verification**: ${input.verify ? 'Enabled' : 'Disabled'}
+` : ''}
 
 ## Migrated Files
 
@@ -188,6 +236,31 @@ ${result.errors.map(e => `- **[${e.phase}]** ${e.file || 'general'}: ${e.error}`
 4. **Testing**: Add unit tests for the extracted library to verify functionality.
 
 5. **Documentation**: Consider adding a README.md with usage instructions for the extracted library.
+
+${tracingEnabled ? `
+## T-DAERA: Smart Stubs
+
+The extracted library includes smart stubs generated from runtime tracing. These stubs contain actual recorded values from test execution.
+
+### Stub Files
+
+Check the \`src/stubs/\` directory for generated stubs. Each stub file contains:
+- **[TRACED]** methods with recorded return values
+- **[FALLBACK]** methods that were not called during tracing
+
+### Maintaining Stubs
+
+1. **Add more scenarios**: Create custom test scenarios to capture more behavior
+2. **Review warnings**: Check console warnings for untraced method calls
+3. **Implement fallbacks**: Replace stub implementations with real code as needed
+
+### Re-running Tracing
+
+To capture more behavior, re-run extraction with additional scenarios:
+\`\`\`bash
+analysis-agent extract -p <project> -m "<module>" --trace --scenario scenarios.json
+\`\`\`
+` : ''}
 
 ---
 *Generated by Analysis Agent on ${new Date().toISOString()}*
