@@ -155,12 +155,25 @@ export class AnalysisAgent {
         this.logger.info('Starting module extraction...');
         this.logger.debug('Input:', JSON.stringify(input, null, 2));
 
+        // Log entry file priority message
+        if (input.entryFiles && input.entryFiles.length > 0) {
+            this.logger.info(`Using entry files for precise extraction: ${input.entryFiles.join(', ')}`);
+        } else if (input.directories && input.directories.length > 0) {
+            this.logger.warn('Using directories - consider using entry files (-e) for simpler extraction');
+        } else {
+            this.logger.warn('No entry files specified - extraction may include more files than needed');
+        }
+
         const sdk = await loadCopilotSDK();
         const skills = await loadSkills();
 
         const libsDir = path.resolve(input.projectPath, '..', 'libs');
         const libName = input.outputLibName || `browser-lib-${Date.now()}`;
         const outputPath = path.join(libsDir, libName);
+
+        // Create logs directory
+        const logsDir = path.join(outputPath, 'logs');
+        await fs.promises.mkdir(logsDir, { recursive: true });
 
         this.context = {
             projectPath: input.projectPath,
@@ -292,7 +305,9 @@ export class AnalysisAgent {
                             projectPath: argsObj.projectPath as string || input.projectPath,
                             moduleDescription: argsObj.moduleDescription as string || input.moduleDescription,
                             directories: argsObj.directories as string[] || input.directories,
-                            entryFiles: input.entryFiles
+                            entryFiles: input.entryFiles,
+                            focusDirectories: input.focusDirectories,
+                            maxDepth: input.maxDepth
                         };
                         this.analysisResult = await skills.analyzeProjectDependencies(analysisInput);
                         this.logger.info(`Found ${this.analysisResult.entryPoints.length} entry points`);
@@ -310,9 +325,10 @@ export class AnalysisAgent {
                             throw new Error('Must run analyze_project first');
                         }
                         this.logger.step('Migrating code files...');
+                        // Always use the predetermined output path to avoid path inconsistency
                         const migrationProgress = await skills.extractAndMigrateCode(
                             this.analysisResult,
-                            argsObj.outputPath as string || outputPath
+                            outputPath
                         );
                         this.logger.info(`Copied ${migrationProgress.copiedFiles.length} files`);
                         return migrationProgress;
@@ -320,9 +336,8 @@ export class AnalysisAgent {
 
                     case 'refactor_imports': {
                         this.logger.step('Refactoring import paths...');
-                        const refactorResult = await skills.refactorImportPaths(
-                            argsObj.libPath as string || outputPath
-                        );
+                        // Always use the predetermined output path
+                        const refactorResult = await skills.refactorImportPaths(outputPath);
                         this.logger.info(`Modified ${refactorResult.modifiedFiles.length} files`);
                         return refactorResult;
                     }
@@ -330,9 +345,10 @@ export class AnalysisAgent {
                     case 'generate_package': {
                         this.logger.step('Generating package.json...');
                         const externalDeps = this.analysisResult?.externalDependencies || [];
+                        // Always use the predetermined output path and lib name
                         const packageResult = await skills.generateLibPackageJson(
-                            argsObj.libPath as string || outputPath,
-                            argsObj.libName as string || libName,
+                            outputPath,
+                            libName,
                             externalDeps
                         );
                         this.logger.info(`Created: ${packageResult.packageJsonPath}`);
@@ -341,9 +357,8 @@ export class AnalysisAgent {
 
                     case 'build_and_validate': {
                         this.logger.step('Building and validating...');
-                        const buildResult = await skills.buildAndValidateLib(
-                            argsObj.libPath as string || outputPath
-                        );
+                        // Always use the predetermined output path
+                        const buildResult = await skills.buildAndValidateLib(outputPath);
                         return buildResult;
                     }
 
@@ -452,6 +467,7 @@ Report any errors you encounter.`;
         libName: string
     ): Promise<MigrationResult> {
         this.logger.info('Running direct skill execution...');
+        const logsDir = path.join(outputPath, 'logs');
 
         // Step 1: Analyze dependencies
         this.logger.step('Step 1: Analyzing project dependencies...');
@@ -462,16 +478,25 @@ Report any errors you encounter.`;
         this.logger.info(`   Found ${analysisResult.entryPoints.length} entry points`);
         this.logger.info(`   Found ${analysisResult.internalDependencies.length} internal files`);
         this.logger.info(`   Found ${analysisResult.externalDependencies.length} external dependencies`);
+        
+        // Save stage 1 log
+        await this.logger.saveToFile(path.join(logsDir, 'stage1-analysis.log'));
 
         // Step 2: Migrate code
         this.logger.step('Step 2: Migrating code files...');
         const migrationProgress = await skills.extractAndMigrateCode(analysisResult, outputPath);
         this.logger.info(`   Copied ${migrationProgress.copiedFiles.length} files`);
+        
+        // Save stage 2 log
+        await this.logger.saveToFile(path.join(logsDir, 'stage2-migrate.log'));
 
         // Step 3: Refactor imports
         this.logger.step('Step 3: Refactoring import paths...');
         const refactorResult = await skills.refactorImportPaths(outputPath);
         this.logger.info(`   Modified ${refactorResult.modifiedFiles.length} files`);
+        
+        // Save stage 3 log
+        await this.logger.saveToFile(path.join(logsDir, 'stage3-refactor.log'));
 
         // Step 4: Generate package.json
         this.logger.step('Step 4: Generating package.json...');
@@ -481,11 +506,17 @@ Report any errors you encounter.`;
             analysisResult.externalDependencies
         );
         this.logger.info(`   Created: ${packageResult.packageJsonPath}`);
+        
+        // Save stage 4 log
+        await this.logger.saveToFile(path.join(logsDir, 'stage4-package.log'));
 
         // Step 5: Build and validate
         this.logger.step('Step 5: Building and validating...');
         const buildResult = await skills.buildAndValidateLib(outputPath);
         this.context!.migrationResult = buildResult;
+        
+        // Save final log
+        await this.logger.saveToFile(path.join(logsDir, 'stage5-build.log'));
 
         return buildResult;
     }

@@ -5,6 +5,10 @@ export interface AnalysisInput {
     outputLibName?: string;
     /** Directories to search for files (relative to project). If provided, only files in these directories are analyzed. */
     directories?: string[];
+    /** Focus directories - only include files from these directories in the extraction (relative to project). */
+    focusDirectories?: string[];
+    /** Maximum depth for dependency traversal (default: unlimited). Use 1 for shallow extraction. */
+    maxDepth?: number;
 }
 
 /** Configuration for the Analysis Agent */

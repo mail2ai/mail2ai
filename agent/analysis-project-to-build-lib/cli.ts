@@ -14,14 +14,17 @@ program
 
 program
     .command('extract')
-    .description('Extract a module from a TypeScript project')
+    .description('Extract a module from a TypeScript project using entry file for precise extraction')
     .requiredOption('-p, --project <path>', 'Path to the source project')
-    .requiredOption('-m, --module <description>', 'Description of the module to extract')
-    .option('-e, --entry <files...>', 'Entry file paths (relative to project)')
+    .requiredOption('-m, --module <description>', 'Description of the module to extract (include entry file path)')
+    .option('-e, --entry <files...>', 'Entry file paths (relative to project) - recommended for precise extraction')
     .option('-n, --name <name>', 'Name for the output library')
-    .option('-d, --directories <dirs...>', 'Directories to search (relative to project, e.g., src/browser assets/chrome-extension)')
-    .option('--model <model>', 'AI model to use (default: gpt-5-mini)', 'gpt-5-mini')
+    .option('-d, --directories <dirs...>', 'Directories to search (deprecated: prefer -e for precise extraction)')
+    .option('-f, --focus <dirs...>', 'Focus directories - only include files from these directories (auto-detected from entry files)')
+    .option('--max-depth <depth>', 'Maximum depth for dependency traversal (use 0 for shallow, 1 for one level)', parseInt)
+    .option('--model <model>', 'AI model to use', 'gpt-5-mini')
     .option('--verbose', 'Enable verbose logging', true)
+    .option('--save-logs', 'Save stage logs for optimization', true)
     .option('--no-sdk', 'Disable Copilot SDK and use direct execution')
     .action(async (options) => {
         const startTime = Date.now();
@@ -37,16 +40,47 @@ program
             ? options.project 
             : path.resolve(process.cwd(), options.project);
 
+        // Auto-detect entry file from module description if not specified
+        let entryFiles = options.entry;
+        if (!entryFiles || entryFiles.length === 0) {
+            // Extract entry file paths from module description
+            const entryFileMatch = options.module.match(/入口文件[：:]?\s*([\w\/\-\.]+\.ts)/i)
+                || options.module.match(/entry\s*file[:\s]+([\w\/\-\.]+\.ts)/i)
+                || options.module.match(/((?:projects\/\w+\/)?(?:src|lib)\/[\w\/\-]+\.ts)/gi);
+            
+            if (entryFileMatch) {
+                entryFiles = Array.isArray(entryFileMatch) ? [entryFileMatch[1] || entryFileMatch[0]] : [entryFileMatch];
+                // Clean up project path prefix if present
+                entryFiles = entryFiles.map((f: string) => f.replace(/^projects\/\w+\//, ''));
+                console.log(chalk.yellow(`📍 Auto-detected entry file: ${entryFiles.join(', ')}`));
+            }
+        }
+
         const input: AnalysisInput = {
             projectPath: projectPath,
             moduleDescription: options.module,
-            entryFiles: options.entry,
+            entryFiles: entryFiles,
             outputLibName: options.name,
-            directories: options.directories
+            directories: options.directories,
+            focusDirectories: options.focus,
+            maxDepth: options.maxDepth
         };
 
-        if (options.directories) {
+        // Log entry files (preferred) or directories
+        if (entryFiles && entryFiles.length > 0) {
+            console.log(chalk.cyan(`Entry files: ${entryFiles.join(', ')}`));
+        } else if (options.directories) {
+            console.log(chalk.yellow(`⚠️ Using directories (consider using -e for precise extraction)`));
             console.log(chalk.gray(`Directories: ${options.directories.join(', ')}`));
+        } else {
+            console.log(chalk.yellow(`⚠️ No entry file specified, will use keyword-based detection`));
+        }
+        
+        if (options.focus) {
+            console.log(chalk.cyan(`Focus directories: ${options.focus.join(', ')}`));
+        }
+        if (options.maxDepth !== undefined) {
+            console.log(chalk.cyan(`Max depth: ${options.maxDepth}`));
         }
 
         const agentConfig: AgentConfig = {

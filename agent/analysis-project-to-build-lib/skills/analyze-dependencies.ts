@@ -113,9 +113,14 @@ function analyzeSourceFile(sourceFile: SourceFile, projectRoot: string): Depende
     };
 }
 
-function collectDependencies(sourceFile: SourceFile, projectRoot: string): void {
+function collectDependencies(sourceFile: SourceFile, projectRoot: string, focusDirs?: string[], maxDepth?: number, currentDepth: number = 0): void {
     const filePath = sourceFile.getFilePath();
     if (processedFiles.has(filePath)) return;
+
+    // Check if we've exceeded max depth
+    if (maxDepth !== undefined && currentDepth > maxDepth) {
+        return;
+    }
 
     processedFiles.add(filePath);
 
@@ -124,12 +129,27 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string): void 
 
     const dependencies: string[] = [];
 
+    // Helper to check if a path is within focus directories
+    const isInFocusDirs = (depFilePath: string): boolean => {
+        if (!focusDirs || focusDirs.length === 0) return true;
+        
+        const relPath = path.relative(projectRoot, depFilePath).replace(/\\/g, '/').toLowerCase();
+        return focusDirs.some(dir => {
+            const normalizedDir = dir.replace(/\\/g, '/').toLowerCase();
+            return relPath.startsWith(normalizedDir + '/') || relPath === normalizedDir;
+        });
+    };
+
     for (const importDecl of sourceFile.getImportDeclarations()) {
         const dependencySourceFile = importDecl.getModuleSpecifierSourceFile();
         if (dependencySourceFile && !dependencySourceFile.isInNodeModules()) {
             const depPath = dependencySourceFile.getFilePath();
             dependencies.push(depPath);
-            collectDependencies(dependencySourceFile, projectRoot);
+            
+            // Only traverse into dependency if it's in focus directories
+            if (isInFocusDirs(depPath)) {
+                collectDependencies(dependencySourceFile, projectRoot, focusDirs, maxDepth, currentDepth + 1);
+            }
         }
     }
 
@@ -139,7 +159,11 @@ function collectDependencies(sourceFile: SourceFile, projectRoot: string): void 
         if (exportedSourceFile && !exportedSourceFile.isInNodeModules()) {
             const depPath = exportedSourceFile.getFilePath();
             dependencies.push(depPath);
-            collectDependencies(exportedSourceFile, projectRoot);
+            
+            // Only traverse into dependency if it's in focus directories
+            if (isInFocusDirs(depPath)) {
+                collectDependencies(exportedSourceFile, projectRoot, focusDirs, maxDepth, currentDepth + 1);
+            }
         }
     }
 
@@ -268,28 +292,87 @@ export async function analyzeProjectDependencies(input: AnalysisInput): Promise<
 
     let entrySourceFiles: SourceFile[] = [];
 
+    // Priority 1: Use explicitly specified entry files (preferred, most precise)
     if (input.entryFiles && input.entryFiles.length > 0) {
-        // Use explicitly specified entry files
+        console.log('  📍 Using entry files (precise mode):', input.entryFiles);
         for (const entryFile of input.entryFiles) {
-            const sf = project.getSourceFile(path.resolve(input.projectPath, entryFile));
-            if (sf) entrySourceFiles.push(sf);
+            // Clean up the entry file path - remove project prefix if present
+            const cleanedPath = entryFile.replace(/^projects\/\w+\//, '');
+            const fullPath = path.resolve(input.projectPath, cleanedPath);
+            console.log(`    Looking for: ${fullPath}`);
+            
+            let sf = project.getSourceFile(fullPath);
+            if (!sf) {
+                // Try adding the file if it exists
+                try {
+                    const fs = await import('fs');
+                    if (fs.existsSync(fullPath)) {
+                        sf = project.addSourceFileAtPath(fullPath);
+                    }
+                } catch {
+                    console.log(`    ⚠️ Could not load: ${fullPath}`);
+                }
+            }
+            if (sf) {
+                console.log(`    ✓ Found: ${sf.getFilePath()}`);
+                entrySourceFiles.push(sf);
+            }
         }
-    } else if (input.directories && input.directories.length > 0) {
-        // Use files from specified directories only
-        console.log('  Searching in directories:', input.directories);
+        
+        if (entrySourceFiles.length === 0) {
+            console.log('  ⚠️ No entry files found, falling back to directory/keyword search');
+        }
+    }
+    
+    // Priority 2: Use files from specified directories (less precise)
+    if (entrySourceFiles.length === 0 && input.directories && input.directories.length > 0) {
+        console.log('  📂 Searching in directories:', input.directories);
         entrySourceFiles = findFilesInDirectories(project, input.projectPath, input.directories);
-    } else {
-        // Fall back to keyword-based search
+    }
+    
+    // Priority 3: Fall back to keyword-based search (least precise)
+    if (entrySourceFiles.length === 0) {
+        console.log('  🔍 Falling back to keyword-based search');
         entrySourceFiles = findEntryPoints(project, input.projectPath, input.moduleDescription);
     }
 
     if (entrySourceFiles.length === 0) {
         throw new Error(`No entry points found for module: ${input.moduleDescription}`);
     }
+    
+    console.log(`  📊 Found ${entrySourceFiles.length} entry point(s)`);
+    for (const sf of entrySourceFiles.slice(0, 5)) {
+        console.log(`    - ${path.relative(input.projectPath, sf.getFilePath())}`);
+    }
+    if (entrySourceFiles.length > 5) {
+        console.log(`    ... and ${entrySourceFiles.length - 5} more`);
+    }
+
+    // Determine focus directories for limiting dependency traversal
+    let focusDirs = input.focusDirectories;
+    if (!focusDirs && input.entryFiles && input.entryFiles.length > 0) {
+        // Auto-detect focus directories from entry files
+        focusDirs = input.entryFiles.map(ef => {
+            const cleanedPath = ef.replace(/^projects\/\w+\//, '');
+            // Extract directory from file path (e.g., src/browser/server.ts -> src/browser)
+            const dir = path.dirname(cleanedPath);
+            return dir;
+        }).filter((v, i, a) => a.indexOf(v) === i); // unique
+        console.log(`  📁 Auto-detected focus directories: ${focusDirs.join(', ')}`);
+    }
 
     // Collect all dependencies starting from entry points
+    // Use maxDepth to limit traversal (default: unlimited for backward compatibility)
+    const maxDepth = input.maxDepth;
+    if (maxDepth !== undefined) {
+        console.log(`  ⚙️ Using max depth: ${maxDepth}`);
+    }
+    if (focusDirs && focusDirs.length > 0) {
+        console.log(`  📂 Limiting extraction to directories: ${focusDirs.join(', ')}`);
+    }
+    
     for (const entrySf of entrySourceFiles) {
-        collectDependencies(entrySf, input.projectPath);
+        collectDependencies(entrySf, input.projectPath, focusDirs, maxDepth, 0);
     }
 
     // Build library structure

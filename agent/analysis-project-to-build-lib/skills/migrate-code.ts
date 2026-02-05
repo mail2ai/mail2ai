@@ -28,6 +28,10 @@ export async function extractAndMigrateCode(
     const srcDir = path.join(outputPath, 'src');
     await ensureDir(srcDir);
 
+    // Recalculate target paths based on the actual outputPath passed in,
+    // not the one in suggestedLibStructure (which may be different)
+    const suggestedOutputPath = analysisResult.suggestedLibStructure.outputPath;
+
     for (const file of analysisResult.suggestedLibStructure.files) {
         try {
             // Check if source file exists
@@ -39,8 +43,16 @@ export async function extractAndMigrateCode(
                 continue;
             }
 
-            await copyFile(file.sourcePath, file.targetPath);
-            progress.copiedFiles.push(file.targetPath);
+            // Recalculate target path using the actual outputPath
+            let targetPath = file.targetPath;
+            if (suggestedOutputPath !== outputPath) {
+                // Replace the suggested output path with the actual output path
+                const relativePath = path.relative(suggestedOutputPath, file.targetPath);
+                targetPath = path.join(outputPath, relativePath);
+            }
+
+            await copyFile(file.sourcePath, targetPath);
+            progress.copiedFiles.push(targetPath);
 
         } catch (error) {
             progress.errors.push({
