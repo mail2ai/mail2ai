@@ -1,0 +1,16 @@
+{
+	"servers": {
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "browsermcp": {
+      "command": "npx",
+      "args": [
+				"-y",
+        "@browsermcp/mcp@latest"
+      ]
+    }
+	},
+	"inputs": []
+}

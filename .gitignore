@@ -18,7 +18,6 @@ dist/
 data/
 
 # IDE
-.vscode/
 .idea/
 
 # OS files
