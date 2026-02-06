@@ -19,9 +19,8 @@
         "noUnusedLocals": false,
         "noUnusedParameters": false,
         "allowSyntheticDefaultImports": true,
-        "baseUrl": ".",
         "paths": {
-            "@/*": ["mail2task/*"]
+            "@/*": ["./mail2task/*"]
         }
     },
     "include": [
